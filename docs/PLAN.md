@@ -51,15 +51,15 @@ Do not claim the idea is unprecedented. Claim the implementation and the measure
 | Frontend | React (Vite), TypeScript, Tailwind CSS | Common in job listings |
 | API | Node.js, Express, TypeScript | Auth, uploads, routes |
 | Auth | JWT, bcrypt | Standard and simple |
-| Agent | Python 3.11, FastAPI | Good for OCR and LLM work |
-| OCR | Tesseract via pytesseract | Light enough for free hosting |
-| Preprocessing | OpenCV, Pillow | Deskew, threshold, denoise |
+| Agent | Node.js, Express, TypeScript | Good for OCR and LLM work |
+| OCR | tesseract.js (Node wrapper for Tesseract) | Light enough for free hosting |
+| Preprocessing | sharp (greyscale, normalize, threshold) | Replaces OpenCV/Pillow |
 | LLM | Gemini API (free tier) with JSON schema output | Structured extraction |
-| Validation | Plain Python rules, rapidfuzz for names | Easy to test and explain |
+| Validation | Plain TypeScript rules, string-similarity for names | Easy to test and explain |
 | Database | PostgreSQL on Neon (free) | Relational data and audit log |
 | Jobs | Database job table, `SELECT ... FOR UPDATE SKIP LOCKED` | No Redis needed |
 | Files | Small files stored as bytea in Postgres | No second service |
-| Testing | Pytest, Vitest or Jest, one Playwright test | Covers each layer |
+| Testing | Vitest, supertest, one Playwright test | Covers each layer |
 | Containers | Docker, Docker Compose | One-command local run |
 | Hosting | Render (API and agent, free), Vercel (web, free) | Zero cost |
 | CI | GitHub Actions | Free for public repos |
@@ -86,7 +86,7 @@ Do not add a payment method to any service unless you have confirmed the free ti
           |                                    |
           | SQL                                | inserts job
           v                                    v
-  PostgreSQL (Neon) <----- polls jobs ----- Worker (Python, Render)
+  PostgreSQL (Neon) <----- polls jobs ----- Worker (Node.js, Render)
   applications, documents,                     |
   extractions, validations,                    v
   jobs, reviews, audit_log           OCR (Tesseract) -> LLM (Gemini)
@@ -201,13 +201,12 @@ Rule for every phase: finish it, test it, commit it, then start the next one.
  
 ## 11.1 Install and sign up (one time)
  
-1. Install Git, Node.js 20 LTS, Python 3.11, and VS Code or Cursor.
+1. Install Git, Node.js 20 LTS, and VS Code or Cursor.
 2. Create free accounts on GitHub, Vercel, Render, Neon, and Google AI Studio (for a Gemini key).
 3. Verify tools:
 ```bash
 git --version
 node -v
-python3 --version
 ```
  
 ## 11.2 Create the local project and repo
@@ -277,16 +276,16 @@ CORS_ORIGIN=http://localhost:5173
  
 ## Project
 Monorepo:
-- apps/web: React (Vite) + Tailwind
-- apps/api: Express + JWT + PostgreSQL (Neon)
-- services/agent: Python FastAPI, Tesseract OCR, Gemini extraction, rule validator
+- apps/web: React (Vite) + TypeScript + Tailwind
+- apps/api: Express + TypeScript + JWT + PostgreSQL (Neon)
+- services/agent: Express + TypeScript + tesseract.js OCR + Gemini SDK extraction + rule validator
 - eval/: synthetic test set, answer key, evaluation script
  
 ## Hard rules
 1. Work one step at a time. Test each step before starting the next.
 2. Never commit secrets. Read config from environment variables. Update .env.example when adding one.
 3. Use synthetic documents only.
-4. Never invent metrics. Only report numbers produced by eval/run_eval.py.
+4. Never invent metrics. Only report numbers produced by eval/run-eval.ts (cd eval && npm run eval).
 5. The LLM never makes the final decision.
 6. Every validation flag stores field, expected, extracted, and reason.
 7. One document type (marksheet) in version 1. No fraud detection, DigiLocker, or WebSockets.
@@ -294,10 +293,10 @@ Monorepo:
 9. Stay on free-tier tools. Ask before adding any paid service.
  
 ## Commands
-- Agent tests: cd services/agent && pytest
+- Agent tests: cd services/agent && npm test
 - API tests: cd apps/api && npm test
 - Web tests: cd apps/web && npm test
-- Evaluation: python eval/run_eval.py
+- Evaluation: cd eval && npm run eval
 ```
  
 ## 11.6 Daily Git workflow (every task)
@@ -320,28 +319,28 @@ Paste one step at a time into your coding agent. Test, commit, then continue.
  
 **Step 1: Scaffold the monorepo**
  
-> Read AGENTS.md and docs/PLAN.md. Create the folder structure from the plan: apps/web (Vite React, TypeScript, Tailwind), apps/api (Express, TypeScript), services/agent (Python FastAPI with requirements.txt and tests/), and eval/ with an empty run_eval.py. Add a hello route to each service. Don't implement features yet.
+> Read AGENTS.md and docs/PLAN.md. Create the folder structure from the plan: apps/web (Vite React, TypeScript, Tailwind), apps/api (Express, TypeScript), services/agent (Express, TypeScript, with src/ and tests/), and eval/ with an empty run-eval.ts. Add a hello route to each service. Don't implement features yet.
 > Acceptance: each service starts locally and returns its hello route.
  
 Commit: `chore: scaffold monorepo services`
  
 **Step 2: Synthetic marksheet generator and answer key**
  
-> Build eval/generate_synthetic.py. It creates 50 PNG marksheets with Pillow and writes eval/data/answer_key.csv. Fields: name, roll number, DOB, board, year, subject marks, total, result. Use fake names and numbers only. Include variety: clean renders, slight rotation and noise, and about 10 deliberate mismatches marked in the answer key. Add a pytest that checks the CSV row count and that every image exists.
-> Acceptance: the script produces 50 images and the CSV, and the test passes.
+> Build eval/src/generate.ts. It creates 50 PNG marksheets with the canvas package and writes eval/data/answer_key.csv. Fields: name, roll number, DOB, board, year, subject marks, total, result. Use fake names and numbers only. Include variety: clean renders, slight rotation and noise, and about 10 deliberate mismatches marked in the answer key. Add a Vitest test that checks the CSV row count and that every image exists.
+> Acceptance: the script produces 50 images and the CSV, and npm test passes.
  
 Commit: `feat(eval): synthetic marksheet generator`
  
 **Step 3: OCR and preprocessing**
  
-> In services/agent/pipeline/preprocess.py, add grayscale, deskew, and threshold using OpenCV and Pillow. In pipeline/ocr.py, add a Tesseract function that returns text and per-line boxes. Add tests on synthetic images.
+> In services/agent/src/ocr.ts, add greyscale, normalize, and threshold preprocessing with sharp, and a Tesseract function via tesseract.js that returns the page text. Add Vitest tests on synthetic images.
 > Acceptance: report the actual number of images where the roll number was read correctly. Don't round it.
  
 Commit: `feat(agent): OCR and preprocessing`
  
 **Step 4: LLM extraction with a schema**
  
-> In pipeline/extract.py, send OCR text to Gemini (key from GEMINI_API_KEY) and request JSON with name, roll_number, dob, board, year, total, result. Validate the response with a Pydantic model. Any invalid or unsupported field becomes null with a warning. Save the prompt in prompts/extract_v1.txt. Tests must mock the LLM call.
+> In services/agent/src/extract.ts, send OCR text to Gemini (key from GEMINI_API_KEY) and request JSON with name, roll_number, dob, board, year, total, result. Validate the response with a Zod schema. Any invalid or unsupported field becomes null with a warning. Save the prompt in prompts/extract_v1.txt. Tests must mock the Gemini SDK call with vi.mock.
 > Acceptance: mocked tests pass. Then run on 10 synthetic documents and report field accuracy against the answer key.
  
 Commit: `feat(agent): LLM extraction with schema`
@@ -442,7 +441,7 @@ Commit: `docs: readme, decisions, results`
  
 ## 13.3 Resume bullet template
  
-"Built a document verification agent (React, Node.js, FastAPI, PostgreSQL, Tesseract OCR, LLM tool calling) with an auditable decision trail. Reduced average review time from X minutes to Y seconds per document on a 100-document synthetic test set, with Z% field-level accuracy against a labelled answer key."
+"Built a document verification agent (React, Node.js, Express, TypeScript, PostgreSQL, Tesseract OCR, Gemini LLM) with an auditable decision trail. Reduced average review time from X minutes to Y seconds per document on a 50-document synthetic test set, with Z% field-level accuracy against a labelled answer key."
  
 Fill X, Y, and Z only from measured results.
  
