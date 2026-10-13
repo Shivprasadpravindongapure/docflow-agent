@@ -33,6 +33,11 @@ function normalizeForGrounding(value: string): string {
   return value.toLowerCase().replace(/\s/g, '');
 }
 
+function containsNumberToken(text: string, value: number): boolean {
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${value}(?![\\p{L}\\p{N}])`, 'u');
+  return pattern.test(text);
+}
+
 export async function extractFields(ocrText: string): Promise<Extracted> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -68,6 +73,16 @@ export async function extractFields(ocrText: string): Promise<Extracted> {
     if (value !== null && !normalizedOcrText.includes(normalizeForGrounding(value))) {
       extracted[field] = null;
       extracted.warnings.push(`The extracted ${field} was not found in the OCR text and was discarded.`);
+    }
+  }
+
+  for (const field of ['year', 'total'] as const) {
+    const value = extracted[field];
+    if (value !== null && !containsNumberToken(ocrText, value)) {
+      extracted[field] = null;
+      extracted.warnings.push(
+        `The extracted ${field} was not found as a standalone number in the OCR text and was discarded.`
+      );
     }
   }
 
