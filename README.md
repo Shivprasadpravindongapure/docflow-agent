@@ -10,3 +10,7 @@ Status: in development.
 - API: `cd apps/api && npm install && npm run dev`
 - Agent: `cd services/agent && npm install && npm run dev`
 - Evaluation: `cd eval && npm install && npm run eval`
+
+## Synthetic evaluation data
+
+Generate the 50-document synthetic marksheet set with `cd eval && npm run generate`. The PNGs and answer key are generated locally by `eval/src/generate.ts`; no public dataset or real student records are used.
