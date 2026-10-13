@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 
-import { createApp } from './server';
+import { createApp } from './server.js';
 
 describe('GET /health', () => {
   it('returns the agent health payload', async () => {
