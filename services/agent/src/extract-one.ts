@@ -1,8 +1,15 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import path from 'node:path';
 
 import { extractFields } from './extract.js';
 import { runOcr } from './ocr.js';
+
+dotenv.config();
+if (!process.env.GEMINI_API_KEY) {
+  const rootEnvironment = dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
+  const rootApiKey = rootEnvironment.parsed?.GEMINI_API_KEY;
+  if (rootApiKey) process.env.GEMINI_API_KEY = rootApiKey;
+}
 
 const imagePath = process.argv[2];
 
