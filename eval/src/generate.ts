@@ -79,6 +79,11 @@ type Marksheet = {
   total: number;
   result: string;
   planted_mismatch: string;
+  form_name: string;
+  form_roll_number: string;
+  form_dob: string;
+  form_year: number;
+  form_total: number;
 };
 
 const headers = [
@@ -90,7 +95,12 @@ const headers = [
   'year',
   'total',
   'result',
-  'planted_mismatch'
+  'planted_mismatch',
+  'form_name',
+  'form_roll_number',
+  'form_dob',
+  'form_year',
+  'form_total'
 ] as const;
 
 function escapeXml(value: string): string {
@@ -108,7 +118,7 @@ function escapeCsv(value: string | number): string {
 }
 
 function createMarksheet(index: number): Marksheet {
-  const record: Marksheet = {
+  const record = {
     id: `DF-2027-${String(index + 1).padStart(4, '0')}`,
     name: names[index],
     roll_number: `SYN27-${String(index + 1).padStart(4, '0')}`,
@@ -116,13 +126,20 @@ function createMarksheet(index: number): Marksheet {
     board: ['North State Board', 'Central State Board', 'Coastal State Board'][index % 3],
     year: 2024 + (index % 3),
     total: 300 + ((index * 17) % 201),
-    result: index % 11 === 0 ? 'PASS WITH DISTINCTION' : 'PASS',
-    planted_mismatch: ''
+    result: index % 11 === 0 ? 'PASS WITH DISTINCTION' : 'PASS'
   };
+  const formFields = {
+    name: record.name,
+    roll_number: record.roll_number,
+    dob: record.dob,
+    year: record.year,
+    total: record.total
+  };
+  let plantedMismatch = '';
 
   if (index < mismatchFields.length) {
     const field = mismatchFields[index];
-    record.planted_mismatch = field;
+    plantedMismatch = field;
 
     switch (field) {
       case 'name':
@@ -149,7 +166,15 @@ function createMarksheet(index: number): Marksheet {
     }
   }
 
-  return record;
+  return {
+    ...record,
+    planted_mismatch: plantedMismatch,
+    form_name: formFields.name,
+    form_roll_number: formFields.roll_number,
+    form_dob: formFields.dob,
+    form_year: formFields.year,
+    form_total: formFields.total
+  };
 }
 
 function renderSvg(record: Marksheet): string {

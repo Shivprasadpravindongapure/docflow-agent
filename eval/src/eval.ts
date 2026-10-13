@@ -1,1 +1,1 @@
-console.log('evaluation not implemented yet.');
+import '../run-eval.js';
