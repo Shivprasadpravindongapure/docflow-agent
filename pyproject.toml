@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+testpaths = ["services/agent/tests", "eval"]
+python_files = ["test_*.py"]
+addopts = "-ra"

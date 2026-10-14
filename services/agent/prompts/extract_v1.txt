@@ -1,6 +1,0 @@
-Extract marksheet fields from the OCR text below.
-
-Return JSON only, with exactly these keys: name, roll_number, dob, board, year, total, result.
-Use null for any field that is missing or unreadable.
-The dob value must use YYYY-MM-DD format. The year and total values must be integers or null.
-Do not infer or invent values. Do not include explanations, markdown, or any text outside the JSON object.

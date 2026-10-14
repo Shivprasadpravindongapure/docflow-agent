@@ -1,17 +1,17 @@
 # DocFlow Agent: Phased Delivery Tasks
 
-**Status:** Phase 1 complete; waiting for owner authorization before Phase 2.
+**Status:** Phases 1 and 2 complete; waiting for owner authorization before Phase 3.
 
-The nine phases below follow section 6 of the supplied PDF plan, with the Python processing agent replacing the separate PDF-only Python microservice and TypeScript processing worker. Work strictly one phase at a time. Phase 1 is complete; phases 2-9 require separate owner authorization. For each approved phase, implement only that phase, run its acceptance commands, update its checkboxes, report the actual output, and stop.
+The nine phases below follow section 6 of the supplied PDF plan, with the Python processing agent replacing the separate PDF-only Python microservice and TypeScript processing worker. Work strictly one phase at a time. Phases 1 and 2 are complete; phases 3-9 require separate owner authorization. For each approved phase, implement only that phase, run its acceptance commands, update its checkboxes, report the actual output, and stop.
 
 ## Preconditions and repository facts
 
 - [ ] Add the original `DocFlow-Python-PDF-Plan.pdf` as `docs/DocFlow-Python-PDF-Plan.pdf`. The source PDF was not present in the repository when this plan was prepared; this plan follows the plan text supplied by the owner.
   - Files: `docs/DocFlow-Python-PDF-Plan.pdf`
   - Proof: `Test-Path docs/DocFlow-Python-PDF-Plan.pdf` (PowerShell) or `test -f docs/DocFlow-Python-PDF-Plan.pdf`.
-- [ ] Before approved code work, reconcile the prior Python-wide migration with the agreed split architecture. Keep the Express API, web client, and live simulator in TypeScript; move document processing and worker duties to `services/agent` Python; retain Python PDF generation in `eval/pdf`.
+- [x] Reconcile the prior Python-wide migration with the agreed split architecture: keep the Express API and web client in TypeScript; place document processing in `services/agent` Python; retain synthetic PDF generation in `eval/pdf`. The Node simulator remains scheduled for Phase 6.
   - Files: currently changed `apps/api/`, `services/agent/`, `eval/`; architecture in `AGENTS.md` and `docs/PLAN.md`.
-  - Proof: `git status --short`; `git diff --check`; verify Express/API and web manifests are TypeScript, the processing service has Python dependencies, and the traffic simulator is Node.
+  - Proof: restored Express API files pass `cd apps/api && npm test`; Python processing code and pinned requirements are under `services/agent`; generated data remains ignored.
 
 ## Phase 1 — Synthetic PDFs
 
@@ -33,17 +33,17 @@ The nine phases below follow section 6 of the supplied PDF plan, with the Python
 
 **Stop point:** the Python FastAPI agent starts on port 4100 and provides bounded PDF text extraction and scanned-page rendering.
 
-- [ ] Create the Python agent service with pinned dependencies and `GET /health` returning `{"status":"ok","service":"agent"}` on port 4100.
+- [x] Create the Python agent service with pinned dependencies and `GET /health` returning `{"status":"ok","service":"agent"}` on port 4100.
   - Files: `services/agent/app/main.py`, `services/agent/requirements.txt`, `services/agent/tests/test_main.py`
-  - Proof: `cd services/agent; pytest`; start with `uvicorn app.main:app --port 4100`, then `curl.exe -f http://localhost:4100/health`.
-- [ ] Implement `POST /extract` with multipart PDF upload, 2 MB maximum, five-page maximum, pdfplumber text extraction, and PyMuPDF page rendering for pages without selectable text. Return page count, per-page text, and PNG page images with an explicit response shape.
-  - Files: `services/agent/app/pdf.py`, `services/agent/app/main.py`, `services/agent/tests/test_pdf.py`
-  - Proof: `cd services/agent; pytest`; use Phase 1 text-based and scanned synthetic PDFs to assert text extraction and image output respectively.
-- [ ] Reject non-PDF, malformed, empty, over-size, and over-page-limit uploads with explicit 4xx errors; ensure requests never persist uploads or call external services.
-  - Files: `services/agent/app/pdf.py`, `services/agent/tests/test_pdf.py`
-  - Proof: `cd services/agent; pytest`; check rejection cases and confirm no uploaded file is written to disk.
+  - Proof: `python -m pytest services/agent/tests`; start with `python -m uvicorn services.agent.app.main:app --port 4100`, then `curl.exe -f http://localhost:4100/health`.
+- [x] Implement `POST /extract` with multipart PDF upload, 2 MB maximum, five-page maximum, pdfplumber text extraction, and PyMuPDF page rendering for pages without selectable text. Return page count, per-page text, and PNG page images with an explicit response shape.
+  - Files: `services/agent/app/pdf.py`, `services/agent/app/main.py`, `services/agent/tests/test_main.py`
+  - Proof: `python -m pytest services/agent/tests/test_main.py`; use Phase 1 text-based and scanned synthetic PDFs to assert text extraction and image output respectively.
+- [x] Reject non-PDF, malformed, empty, over-size, and over-page-limit uploads with explicit 4xx errors; ensure requests never persist uploads or call external services.
+  - Files: `services/agent/app/pdf.py`, `services/agent/tests/test_main.py`
+  - Proof: `python -m pytest services/agent/tests/test_main.py`; rejection cases pass and the service creates no uploaded files.
 
-**Phase acceptance:** health payload is exact; text PDF returns page text; scanned PDF returns rendered PNG page(s); Python agent tests pass. Do not create a separate `services/pdf` service.
+**Phase acceptance: PASS.** Health returned `{"status":"ok","service":"agent"}`. Live POST `/extract` returned HTTP 200 for both generated fixtures: the text PDF returned 270 characters of selectable text and no image payload; the scanned PDF returned a PNG with the valid PNG signature. Service tests: 10 passed; full Python suite: 33 passed. Express API tests: 1 passed; React production build succeeded. Uploads are processed in memory, and limit/error cases pass. No separate `services/pdf` service was created.
 
 ## Phase 3 — Python agent processing pipeline
 

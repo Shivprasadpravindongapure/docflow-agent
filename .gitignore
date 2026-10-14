@@ -9,6 +9,7 @@ dist/
 build/
 .next/
 eval/data/
+eval/results/
 uploads/
 .DS_Store
 .vscode/
