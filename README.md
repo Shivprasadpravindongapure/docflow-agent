@@ -2,12 +2,12 @@
 
 DocFlow Agent is planned as a live marksheet review workflow, exercised with synthetic applicants and documents only. The React UI and Express application API stay in TypeScript; a Python agent service handles PDF processing, OCR, extraction, validation, and background jobs. The traffic simulator remains Node.js.
 
-**Status:** Phases 1-3 are complete: reproducible synthetic PDFs and a Python agent that extracts, OCRs, and validates synthetic marksheets are available. Database integration, authenticated applicant APIs, UI workflow, simulator, and deployment are later phases. Use synthetic documents only.
+**Status:** Phases 1-5 are complete: reproducible synthetic PDFs, a Python processing pipeline, a PostgreSQL-backed Express API and worker, and a live applicant status preview are available. Document submission/reviewer screens, simulator, and deployment are later phases. Use synthetic documents only.
 
 ## Stack
 
 - Web: React, Vite, TypeScript, Tailwind CSS
-- Application API: Node.js, Express, TypeScript
+- Application API: Node.js, Express, TypeScript, PostgreSQL (configured through `DATABASE_URL`)
 - Processing agent: Python 3.11+, FastAPI, Pydantic
 - OCR and image preprocessing: Tesseract OCR, pytesseract, Pillow
 - Name matching: RapidFuzz
@@ -36,7 +36,7 @@ The agent exposes `GET /health`, `POST /extract`, and `POST /process` at `http:/
 
 **Synthetic/local use only:** `/process` is not authenticated. Bind the service to loopback as shown above and do not expose it to a network or submit real student records. Real-department use must wait for authenticated API integration and the later security/deployment phases. The default labelled-field extractor needs no API key. Tesseract must be installed separately and available on `PATH` for actual OCR; Gemini is optional, requires `GEMINI_API_KEY`, and sends OCR text to Google's service, so keep it disabled for anything other than authorized synthetic data.
 
-The TypeScript API can be started separately:
+Copy `.env.example` to `.env` and set `DATABASE_URL` to the PostgreSQL connection string for your development database. Keep `.env` private. Start the API from `apps/api`:
 
 ```powershell
 cd apps/api
@@ -44,25 +44,43 @@ npm install
 npm run dev
 ```
 
-The React UI is in `apps/web`; its applicant/reviewer flow is planned for a later phase.
+The API listens on `127.0.0.1:4000` by default. It allows browser requests from the local Vite origins `http://localhost:5173` and `http://127.0.0.1:5173`; set `WEB_ORIGINS` to override them. `HOST` and `PORT` can also be overridden. To process queued uploads, start the worker from the repository root in another terminal:
+
+```powershell
+python -m services.agent.app.worker
+```
+
+The Express API and Python worker read the same `DATABASE_URL`. The worker claims jobs using PostgreSQL row locks, retries processing failures up to three attempts, and stores validation evidence and audit events. Uploaded synthetic documents are stored under the ignored `uploads/` directory.
+
+The React status preview is in `apps/web`. It signs in to the Express API, lists the signed-in user's applications, and subscribes to each application's owner-authorized Server-Sent Events stream. The browser uses `fetch` streaming rather than native `EventSource` so the bearer token can stay in an `Authorization` header instead of the URL; the token is held in memory only. The API checks the latest job once per second and emits only changed status values; reconnects use capped exponential backoff and the browser has no polling fallback. The API URL defaults to `http://127.0.0.1:4000`; set `VITE_API_BASE_URL` in `apps/web/.env.local` if the API uses a different local address. Ensure the API's `WEB_ORIGINS` includes the browser origin.
 
 Run the PDF service and Python tests:
 
 ```powershell
 python -m pytest
+
+# API and status dashboard
+cd apps/api
+npm test
+npm run build
+cd ../web
+npm test
+npm run build
 ```
 
 Phase-specific evaluation output is written to the ignored `eval/results/` directory. Only report metrics emitted by an actual evaluation/simulator run.
 
-## React UI
+## React status preview
 
-The web client remains in `apps/web` and is not yet connected to the Python API:
+Start the API and worker as described above, then start the web client:
 
 ```powershell
 cd apps/web
 npm install
 npm run dev
 ```
+
+The status page is a development preview for synthetic accounts and applications. Its status stream returns only application ID, status, and update time; it does not expose document contents or validation details.
 
 ## Current milestone and next work
 

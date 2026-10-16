@@ -1,8 +1,8 @@
 # DocFlow Agent: Phased Delivery Tasks
 
-**Status:** Phases 1-3 complete; waiting for owner authorization before Phase 4.
+**Status:** Phases 1-5 complete; waiting for owner authorization before Phase 6.
 
-The nine phases below follow section 6 of the supplied PDF plan, with the Python processing agent replacing the separate PDF-only Python microservice and TypeScript processing worker. Work strictly one phase at a time. Phases 1-3 are complete; phases 4-9 require separate owner authorization. For each approved phase, implement only that phase, run its acceptance commands, update its checkboxes, report the actual output, and stop.
+The nine phases below follow section 6 of the supplied PDF plan, with the Python processing agent replacing the separate PDF-only Python microservice and TypeScript processing worker. Work strictly one phase at a time. Phases 1-5 are complete; phases 6-9 require separate owner authorization. For each approved phase, implement only that phase, run its acceptance commands, update its checkboxes, report the actual output, and stop.
 
 ## Preconditions and repository facts
 
@@ -62,42 +62,42 @@ The nine phases below follow section 6 of the supplied PDF plan, with the Python
   - Files: `services/agent/app/processing/validate.py`, `services/agent/app/processing/pipeline.py`, `services/agent/app/main.py`, `services/agent/tests/`, `eval/test_run_eval.py`
   - Proof: `python -m pytest services/agent/tests`; synthetic text/scanned PDFs and images reach `verified`, `needs_review`, and `missing` cases without auto-rejection.
 
-**Phase acceptance: PASS.** `python -m pytest services/agent/tests -q` passed twice (40 tests per run); the full Python suite `python -m pytest -q` passed (47 tests). Synthetic text PDFs, scanned PDFs, PNG, and JPEG requests cover all three decision states, validation evidence, size/type limits, and stage timings. OCR is mocked for deterministic end-to-end scan tests; the local environment does not have the Tesseract executable, and the service reports this explicitly until it is installed. The endpoint remains unauthenticated and synthetic/local-only; do not expose it or submit real student records. No API key is needed for the default regex extractor. Do not start Phase 4 until separately authorized.
+**Phase acceptance: PASS.** `python -m pytest services/agent/tests -q` passed twice (40 tests per run); the full Python suite `python -m pytest -q` passed (47 tests). Synthetic text PDFs, scanned PDFs, PNG, and JPEG requests cover all three decision states, validation evidence, size/type limits, and stage timings. OCR is mocked for deterministic end-to-end scan tests; the local environment does not have the Tesseract executable, and the service reports this explicitly until it is installed. The endpoint remains unauthenticated and synthetic/local-only; do not expose it or submit real student records. No API key is needed for the default regex extractor. Phase 4 was separately authorized and is completed below.
 
 ## Phase 4 — Database and API
 
 **Stop point:** registration, login, application creation, PDF/PNG upload, and job creation work through the Express API using synthetic data.
 
-- [ ] Restore or implement TypeScript Express API, schema migrations, database configuration, and typed models for users, applications, documents, jobs, validations, reviews, and audit events.
-  - Files: `apps/api/package.json`, `apps/api/src/server.ts`, `apps/api/src/db/`, `apps/api/src/migrations/`, `apps/api/src/server.test.ts`
-  - Proof: `cd apps/api && npm test`; migration tests run against a configured test database or documented local test fixture.
-- [ ] Add registration/login and authenticated application/document routes, upload size/type validation, synthetic-only test fixtures, and job enqueueing. Never put credentials in source control.
-  - Files: `apps/api/src/routes/auth.ts`, `apps/api/src/routes/applications.ts`, `apps/api/src/routes/documents.ts`, `apps/api/src/middleware/`, `.env.example`
-  - Proof: `cd apps/api && npm test`; use `curl.exe` with synthetic fixture data to register, log in, create an application, upload a document, and verify a job row.
-- [ ] Connect the Python agent worker to the database job table; claim jobs safely, process PDF/PNG through the Python pipeline, persist validations and audit entries, and retry failures with a bounded policy.
+- [x] Restore or implement TypeScript Express API, PostgreSQL schema migrations, database configuration, and typed models for users, applications, documents, jobs, validations, reviews, and audit events.
+  - Files: `apps/api/package.json`, `apps/api/src/server.ts`, `apps/api/src/db/models.ts`, `apps/api/src/migrations/`, `apps/api/src/server.test.ts`
+  - Proof: `cd apps/api; npm test`; schema-isolated migration and API integration tests run against `TEST_DATABASE_URL` or the configured `DATABASE_URL`.
+- [x] Add registration/login and authenticated application/document routes, upload size/type validation, synthetic-only test fixtures, and job enqueueing. Never put credentials in source control.
+  - Files: `apps/api/src/server.ts`, `apps/api/src/server.test.ts`, `.env.example`
+  - Proof: `cd apps/api; npm test`; integration tests register, log in, create an application, upload a synthetic PNG, and verify a queued job.
+- [x] Connect the Python agent worker to the PostgreSQL job table; claim jobs safely, process PDF/PNG through the Python pipeline, persist validations and audit entries, and retry failures with a bounded policy.
   - Files: `services/agent/app/worker.py`, `services/agent/app/db.py`, `services/agent/tests/test_worker.py`, `.env.example`
-  - Proof: `cd services/agent && pytest`; test duplicate workers, retries, failed jobs, and successful synthetic PDF processing.
-- [ ] Persist each validation flag and audit entry with field, expected, extracted, and reason; keep decisions at `verified`, `needs_review`, or `missing` and never auto-reject.
-  - Files: `apps/api/src/db/`, `apps/api/src/routes/`, `apps/api/src/server.test.ts`
-  - Proof: `cd apps/api && npm test`; verify stored rows and audit history for pass, mismatch, and missing-field cases.
+  - Proof: `python -m pytest services/agent/tests`; test duplicate workers, retries, failed jobs, and successful synthetic PDF processing.
+- [x] Persist each validation flag and audit entry with field, expected, extracted, and reason; keep decisions at `verified`, `needs_review`, or `missing` and never auto-reject.
+  - Files: `apps/api/src/db/`, `apps/api/src/migrations/`, `apps/api/src/server.ts`, `apps/api/src/server.test.ts`
+  - Proof: `cd apps/api; npm test`; verify stored validation evidence and audit history for synthetic records.
 
-**Phase acceptance:** synthetic upload through API creates a job row that the Python agent processes into a decision and audit trail; API and Python agent tests pass.
+**Phase acceptance: PASS.** PostgreSQL migrations create the users, applications, documents, jobs, validations, reviews, audit events, and session tables. API integration tests passed twice (3 tests per run), `npm run build` passed, and the Python agent/worker suite passed (44 tests; 6 dependency deprecation warnings). The API tests use a disposable `docflow_test_*` schema; for Neon transaction-pooler `DATABASE_URL`s they connect to the matching direct endpoint so schema isolation persists across requests. Synthetic API tests cover registration, login, application creation, upload, queue creation, and audit entries. The worker uses `FOR UPDATE SKIP LOCKED`, recovers stale claims, and retries failures at most three times. The example environment file contains placeholders only; local `.env` is ignored by Git.
 
 ## Phase 5 — Live status
 
 **Stop point:** applicant status updates without page refresh, using Server-Sent Events (SSE).
 
-- [ ] Add authenticated SSE endpoint with correct event-stream headers, per-user/document authorization, disconnect cleanup, and status events.
-  - Files: `apps/api/src/routes/status.ts`, `apps/api/src/server.ts`, `apps/api/src/routes/status.test.ts`
-  - Proof: `cd apps/api && npm test`; stream receives queued, processing, and terminal synthetic-job updates and closes on client disconnect.
-- [ ] Add React status subscription with reconnect/error handling and a polling fallback only if explicitly documented.
-  - Files: `apps/web/src/App.tsx`, `apps/web/src/api/`, `apps/web/src/components/DocumentStatus.tsx`
-  - Proof: `cd apps/web && npm run build`; UI test verifies status updates without refresh.
-- [ ] Ensure events contain no secrets or document contents and only reach the owning synthetic test applicant/reviewer.
-  - Files: `apps/api/src/routes/status.test.ts`
-  - Proof: `cd apps/api && npm test`; authorization and event-payload tests pass.
+- [x] Add authenticated SSE endpoint with correct event-stream headers, per-user/application authorization, disconnect cleanup, and status events.
+  - Files: `apps/api/src/server.ts`, `apps/api/src/server.test.ts`
+  - Proof: `cd apps/api; npm test`; stream receives queued, processing, and terminal synthetic-job updates and stops polling after client disconnect.
+- [x] Add React status subscription with reconnect/error handling and no polling fallback.
+  - Files: `apps/web/src/App.tsx`, `apps/web/src/api/client.ts`, `apps/web/src/api/status.ts`, `apps/web/src/components/DocumentStatus.tsx`
+  - Proof: `cd apps/web; npm test`; component tests assert live status changes without reconnecting or refreshing. `npm run build` verifies the production bundle.
+- [x] Ensure events contain no secrets or document contents and only reach the owning synthetic test applicant.
+  - Files: `apps/api/src/server.ts`, `apps/api/src/server.test.ts`
+  - Proof: `cd apps/api; npm test`; authorization and minimal event-payload tests pass.
 
-**Phase acceptance:** a browser status view updates from a synthetic worker job without refreshing; API and web tests pass.
+**Phase acceptance: PASS.** The API integration suite passed twice (4 tests per run) and the API TypeScript build passed. It streamed queued, processing, and verified status updates for the owner, returned 401/404 to unauthenticated/other-account requests, omitted document contents and tokens, and stopped polling after client disconnect. The web status component tests passed (2 tests); the production build passed; API and web `npm audit` both reported 0 vulnerabilities. A browser smoke test signed in with synthetic values and displayed `needs_review` from a mock status stream without reloading; the database-driven SSE transitions and synthetic PDF worker pipeline are covered separately by integration tests. No real applicant data was used. Stop here; do not start Phase 6 until separately authorized.
 
 ## Phase 6 — Node live-traffic simulator
 
