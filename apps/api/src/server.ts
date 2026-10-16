@@ -143,15 +143,254 @@ export function createApp(pool = createPool()) {
     await poll();
     return undefined;
   }));
-  app.use('/applications/:applicationId/documents', express.raw({ type: ['application/pdf','image/png'], limit: MAX_UPLOAD }));
+  app.use('/applications/:applicationId/documents', express.raw({ type: ['application/pdf','image/png','image/jpeg'], limit: MAX_UPLOAD }));
   app.post('/applications/:applicationId/documents', auth, route(async (req,res) => {
     const applicationId=String(req.params.applicationId), owner=await pool.query('SELECT id FROM applications WHERE id=$1 AND user_id=$2',[applicationId,req.userId]); if (!owner.rowCount) return res.status(404).json({error:'Application not found.'});
-    const contentType=req.header('content-type')?.toLowerCase().split(';')[0]; if (!['application/pdf','image/png'].includes(contentType??'')) return res.status(415).json({error:'Only PDF and PNG uploads are supported.'});
-    const bytes=Buffer.isBuffer(req.body)?req.body:Buffer.alloc(0); if(!bytes.length)return res.status(400).json({error:'Empty upload.'}); if(contentType==='application/pdf'&&!bytes.subarray(0,5).equals(Buffer.from('%PDF-')))return res.status(422).json({error:'Invalid PDF signature.'}); if(contentType==='image/png'&&!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return res.status(422).json({error:'Invalid PNG signature.'});
-    const documentId=id(),jobId=id(),sha=createHash('sha256').update(bytes).digest('hex'),base=resolve(projectRoot,process.env.UPLOAD_DIR||'uploads'),file=resolve(base,`${documentId}.${contentType==='application/pdf'?'pdf':'png'}`); mkdirSync(base,{recursive:true}); writeFileSync(file,bytes,{flag:'wx'});
-    const client=await pool.connect(); try { await client.query('BEGIN'); await client.query('INSERT INTO documents(id,application_id,filename,content_type,sha256,storage_path) VALUES($1,$2,$3,$4,$5,$6)',[documentId,applicationId,`upload.${contentType==='application/pdf'?'pdf':'png'}`,contentType,sha,file]); await client.query("INSERT INTO jobs(id,document_id,status,available_at) VALUES($1,$2,'queued',now())",[jobId,documentId]); await client.query("UPDATE applications SET status='queued' WHERE id=$1",[applicationId]); await audit(client,req.userId!,applicationId,'document.uploaded',{content_type:contentType,sha256:sha},documentId,jobId); await audit(client,req.userId!,applicationId,'job.queued',{status:'queued'},documentId,jobId); await client.query('COMMIT'); return res.status(202).json({document_id:documentId,job_id:jobId,status:'queued'}); } catch(error) { await client.query('ROLLBACK'); unlinkSync(file); throw error; } finally { client.release(); }
+    const contentType=req.header('content-type')?.toLowerCase().split(';')[0]; if (!['application/pdf','image/png','image/jpeg'].includes(contentType??'')) return res.status(415).json({error:'Only PDF, PNG, and JPEG uploads are supported.'});
+    const bytes=Buffer.isBuffer(req.body)?req.body:Buffer.alloc(0); if(!bytes.length)return res.status(400).json({error:'Empty upload.'}); if(contentType==='application/pdf'&&!bytes.subarray(0,5).equals(Buffer.from('%PDF-')))return res.status(422).json({error:'Invalid PDF signature.'}); if(contentType==='image/png'&&!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return res.status(422).json({error:'Invalid PNG signature.'}); if(contentType==='image/jpeg'&&!bytes.subarray(0,3).equals(Buffer.from([0xff,0xd8,0xff])))return res.status(422).json({error:'Invalid JPEG signature.'});
+    const ext=contentType==='application/pdf'?'pdf':contentType==='image/jpeg'?'jpg':'png';
+    const documentId=id(),jobId=id(),sha=createHash('sha256').update(bytes).digest('hex'),base=resolve(projectRoot,process.env.UPLOAD_DIR||'uploads'),file=resolve(base,`${documentId}.${ext}`); mkdirSync(base,{recursive:true}); writeFileSync(file,bytes,{flag:'wx'});
+    const client=await pool.connect(); try { await client.query('BEGIN'); await client.query('INSERT INTO documents(id,application_id,filename,content_type,sha256,storage_path) VALUES($1,$2,$3,$4,$5,$6)',[documentId,applicationId,`upload.${ext}`,contentType,sha,file]); await client.query("INSERT INTO jobs(id,document_id,status,available_at) VALUES($1,$2,'queued',now())",[jobId,documentId]); await client.query("UPDATE applications SET status='queued' WHERE id=$1",[applicationId]); await audit(client,req.userId!,applicationId,'document.uploaded',{content_type:contentType,sha256:sha},documentId,jobId); await audit(client,req.userId!,applicationId,'job.queued',{status:'queued'},documentId,jobId); await client.query('COMMIT'); return res.status(202).json({document_id:documentId,job_id:jobId,status:'queued'}); } catch(error) { await client.query('ROLLBACK'); unlinkSync(file); throw error; } finally { client.release(); }
   }));
   app.get('/applications/:applicationId', auth, route(async (req,res) => { const result=await pool.query('SELECT id,status,form_json,created_at FROM applications WHERE id=$1 AND user_id=$2',[req.params.applicationId,req.userId]); if(!result.rowCount)return res.status(404).json({error:'Application not found.'}); return res.json(result.rows[0]); }));
+  app.get('/applications/:applicationId/result', auth, route(async (req, res) => {
+    const applicationId = String(req.params.applicationId);
+    const owner = await pool.query('SELECT id FROM applications WHERE id=$1 AND user_id=$2', [applicationId, req.userId]);
+    if (!owner.rowCount) return res.status(404).json({ error: 'Application not found.' });
+
+    const jobResult = await pool.query<{
+      id: string;
+      status: string;
+      result_json: Record<string, unknown> | null;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      'SELECT j.id, j.status, j.result_json, j.created_at, j.updated_at FROM jobs j JOIN documents d ON d.id=j.document_id WHERE d.application_id=$1 ORDER BY j.created_at DESC LIMIT 1',
+      [applicationId]
+    );
+
+    if (!jobResult.rowCount) {
+      return res.json({ status: 'draft' });
+    }
+
+    const job = jobResult.rows[0];
+    if (job.status !== 'completed') {
+      return res.json({ status: job.status === 'failed' ? 'failed' : 'processing' });
+    }
+
+    const valRows = await pool.query<{
+      field: string;
+      expected: unknown;
+      extracted: unknown;
+      result: string;
+      reason: string;
+    }>(
+      'SELECT field, expected, extracted, result, reason FROM validations WHERE job_id=$1 ORDER BY created_at ASC',
+      [job.id]
+    );
+
+    let validations = valRows.rows;
+    if (!validations.length && Array.isArray(job.result_json?.validations)) {
+      validations = (job.result_json.validations as any[]).map((v) => ({
+        field: v.field,
+        expected: v.expected,
+        extracted: v.extracted,
+        result: v.result,
+        reason: v.reason,
+      }));
+    }
+
+    const passCount = validations.filter((v) => v.result === 'pass').length;
+    const match_score = validations.length > 0 ? Math.round((passCount / validations.length) * 1000) / 10 : 0;
+    const decision = (job.result_json?.decision as string) || 'verified';
+    const timings = job.result_json?.timings ?? job.result_json?.timings_ms ?? null;
+
+    return res.json({
+      status: 'completed',
+      decision,
+      match_score,
+      validations,
+      timings,
+      created_at: job.created_at,
+      updated_at: job.updated_at,
+    });
+  }));
+  app.get('/applications/:applicationId/documents', auth, route(async (req, res) => {
+    const applicationId = String(req.params.applicationId);
+    const owner = await pool.query('SELECT id FROM applications WHERE id=$1 AND user_id=$2', [applicationId, req.userId]);
+    if (!owner.rowCount) return res.status(404).json({ error: 'Application not found.' });
+
+    const docs = await pool.query<{ id: string; filename: string; content_type: string; created_at: Date }>(
+      'SELECT id, filename, content_type, created_at FROM documents WHERE application_id=$1 ORDER BY created_at ASC',
+      [applicationId]
+    );
+    return res.json(docs.rows);
+  }));
+  app.get('/applications/:applicationId/documents/:documentId/file', auth, route(async (req, res) => {
+    const applicationId = String(req.params.applicationId);
+    const documentId = String(req.params.documentId);
+
+    const owner = await pool.query('SELECT id FROM applications WHERE id=$1 AND user_id=$2', [applicationId, req.userId]);
+    if (!owner.rowCount) return res.status(404).json({ error: 'Application not found.' });
+
+    const docRes = await pool.query<{ content_type: string; storage_path: string }>(
+      'SELECT content_type, storage_path FROM documents WHERE id=$1 AND application_id=$2',
+      [documentId, applicationId]
+    );
+    if (!docRes.rowCount) return res.status(404).json({ error: 'Document not found.' });
+
+    const { content_type, storage_path } = docRes.rows[0];
+    try {
+      const fileBytes = readFileSync(storage_path);
+      res.setHeader('Content-Type', content_type);
+      return res.send(fileBytes);
+    } catch {
+      return res.status(404).json({ error: 'Document file not found.' });
+    }
+  }));
+  app.get('/applications/:applicationId/audit', auth, route(async (req, res) => {
+    const applicationId = String(req.params.applicationId);
+    const owner = await pool.query('SELECT id FROM applications WHERE id=$1 AND user_id=$2', [applicationId, req.userId]);
+    if (!owner.rowCount) return res.status(404).json({ error: 'Application not found.' });
+
+    const events = await pool.query<{ id: string; event: string; details_json: unknown; created_at: Date; actor_id: string | null }>(
+      'SELECT id, event, details_json, created_at, actor_id FROM audit_events WHERE application_id=$1 ORDER BY created_at ASC',
+      [applicationId]
+    );
+    return res.json(events.rows);
+  }));
+  app.get('/reviewer/queue', auth, route(async (_req, res) => {
+    const queue = await pool.query<{ id: string; status: string; form_json: unknown; created_at: Date; user_id: string }>(
+      "SELECT id, status, form_json, created_at, user_id FROM applications WHERE status IN ('needs_review', 'missing') ORDER BY created_at ASC"
+    );
+    return res.json(queue.rows);
+  }));
+  app.get('/reviewer/applications/:applicationId', auth, route(async (req, res) => {
+    const applicationId = String(req.params.applicationId);
+    const appRes = await pool.query<{ id: string; status: string; form_json: unknown; created_at: Date; user_id: string }>(
+      'SELECT id, status, form_json, created_at, user_id FROM applications WHERE id=$1',
+      [applicationId]
+    );
+    if (!appRes.rowCount) return res.status(404).json({ error: 'Application not found.' });
+    const application = appRes.rows[0];
+
+    const docsRes = await pool.query<{ id: string; filename: string; content_type: string; created_at: Date }>(
+      'SELECT id, filename, content_type, created_at FROM documents WHERE application_id=$1 ORDER BY created_at ASC',
+      [applicationId]
+    );
+
+    const jobRes = await pool.query<{
+      id: string;
+      status: string;
+      result_json: Record<string, unknown> | null;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      'SELECT j.id, j.status, j.result_json, j.created_at, j.updated_at FROM jobs j JOIN documents d ON d.id=j.document_id WHERE d.application_id=$1 ORDER BY j.created_at DESC LIMIT 1',
+      [applicationId]
+    );
+
+    let result: any = null;
+    let validations: any[] = [];
+    if (jobRes.rowCount) {
+      const job = jobRes.rows[0];
+      const valRows = await pool.query<{
+        field: string;
+        expected: unknown;
+        extracted: unknown;
+        result: string;
+        reason: string;
+      }>(
+        'SELECT field, expected, extracted, result, reason FROM validations WHERE job_id=$1 ORDER BY created_at ASC',
+        [job.id]
+      );
+      validations = valRows.rows;
+      if (!validations.length && Array.isArray(job.result_json?.validations)) {
+        validations = (job.result_json.validations as any[]).map((v) => ({
+          field: v.field,
+          expected: v.expected,
+          extracted: v.extracted,
+          result: v.result,
+          reason: v.reason,
+        }));
+      }
+
+      if (job.status === 'completed') {
+        const passCount = validations.filter((v) => v.result === 'pass').length;
+        const match_score = validations.length > 0 ? Math.round((passCount / validations.length) * 1000) / 10 : 0;
+        const decision = (job.result_json?.decision as string) || 'verified';
+        const timings = job.result_json?.timings ?? job.result_json?.timings_ms ?? null;
+        result = {
+          status: 'completed',
+          decision,
+          match_score,
+          validations,
+          timings,
+          created_at: job.created_at,
+          updated_at: job.updated_at,
+        };
+      } else {
+        result = { status: job.status === 'failed' ? 'failed' : 'processing' };
+      }
+    }
+
+    const auditRes = await pool.query<{ id: string; event: string; details_json: unknown; created_at: Date; actor_id: string | null }>(
+      'SELECT id, event, details_json, created_at, actor_id FROM audit_events WHERE application_id=$1 ORDER BY created_at ASC',
+      [applicationId]
+    );
+
+    const reviewsRes = await pool.query<{ id: string; decision: string; note: string; created_at: Date; reviewer_id: string }>(
+      'SELECT id, decision, note, created_at, reviewer_id FROM reviews WHERE application_id=$1 ORDER BY created_at ASC',
+      [applicationId]
+    );
+
+    return res.json({
+      id: application.id,
+      status: application.status,
+      form_json: application.form_json,
+      created_at: application.created_at,
+      user_id: application.user_id,
+      documents: docsRes.rows,
+      result,
+      validations,
+      audit: auditRes.rows,
+      reviews: reviewsRes.rows,
+    });
+  }));
+  app.post('/reviewer/applications/:applicationId/review', auth, route(async (req, res) => {
+    const applicationId = String(req.params.applicationId);
+    const decision = req.body?.decision;
+    const note = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+
+    if (!['verified', 'needs_review', 'missing'].includes(decision)) {
+      return res.status(400).json({ error: 'Valid decision is required (verified, needs_review, or missing).' });
+    }
+    if (!note) {
+      return res.status(400).json({ error: 'Review note is required and must not be empty.' });
+    }
+
+    const appRes = await pool.query('SELECT id FROM applications WHERE id=$1', [applicationId]);
+    if (!appRes.rowCount) return res.status(404).json({ error: 'Application not found.' });
+
+    const reviewId = id();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'INSERT INTO reviews(id, application_id, reviewer_id, decision, note) VALUES($1, $2, $3, $4, $5)',
+        [reviewId, applicationId, req.userId, decision, note]
+      );
+      await client.query('UPDATE applications SET status=$1 WHERE id=$2', [decision, applicationId]);
+      await audit(client, req.userId!, applicationId, 'review.submitted', { decision, note, review_id: reviewId });
+      await client.query('COMMIT');
+      return res.status(200).json({ id: reviewId, status: decision });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }));
   app.use((error: unknown,_req: Request,res: Response,_next: NextFunction)=>{if((error as {type?:string})?.type==='entity.too.large')return res.status(413).json({error:'Upload exceeds 2 MB.'});console.error('API request failed:',error);return res.status(500).json({error:'Internal server error.'});});
   return app;
 }

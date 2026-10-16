@@ -171,4 +171,223 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       );
     }
   });
+
+  it('handles JPEG upload, results, documents, audit, reviewer queue, and review submission', async () => {
+    const userEmail = `phase-a-${suffix}@example.test`;
+    const reviewerEmail = `reviewer-${suffix}@example.test`;
+    const otherEmail = `unauth-${suffix}@example.test`;
+    const password = 'synthetic-passphrase-2027';
+
+    await request(app).post('/auth/register').send({ email: userEmail, password }).expect(201);
+    await request(app).post('/auth/register').send({ email: reviewerEmail, password }).expect(201);
+    await request(app).post('/auth/register').send({ email: otherEmail, password }).expect(201);
+
+    const userLogin = await request(app).post('/auth/login').send({ email: userEmail, password }).expect(200);
+    const userAuth = `Bearer ${userLogin.body.token}`;
+
+    const reviewerLogin = await request(app).post('/auth/login').send({ email: reviewerEmail, password }).expect(200);
+    const reviewerAuth = `Bearer ${reviewerLogin.body.token}`;
+
+    const otherLogin = await request(app).post('/auth/login').send({ email: otherEmail, password }).expect(200);
+    const otherAuth = `Bearer ${otherLogin.body.token}`;
+
+    // 1. Create application and check draft result
+    const created = await request(app)
+      .post('/applications')
+      .set('Authorization', userAuth)
+      .send({ name: 'Sneha Patel', roll_number: 'SYN-JPEG-001', dob: '2008-03-15', year: 2025, board: 'Synthetic Board', total: 460 })
+      .expect(201);
+    const appId = created.body.id;
+
+    const draftResult = await request(app)
+      .get(`/applications/${appId}/result`)
+      .set('Authorization', userAuth)
+      .expect(200);
+    expect(draftResult.body).toEqual({ status: 'draft' });
+
+    // 2. Reject invalid JPEG signature
+    await request(app)
+      .post(`/applications/${appId}/documents`)
+      .set('Authorization', userAuth)
+      .set('Content-Type', 'image/jpeg')
+      .send(Buffer.from([0x00, 0x11, 0x22, 0x33]))
+      .expect(422);
+
+    // 3. Accept valid JPEG upload
+    const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+    const uploadRes = await request(app)
+      .post(`/applications/${appId}/documents`)
+      .set('Authorization', userAuth)
+      .set('Content-Type', 'image/jpeg')
+      .send(jpegBytes)
+      .expect(202);
+    const docId = uploadRes.body.document_id;
+    const jobId = uploadRes.body.job_id;
+
+    // Check document stored with image/jpeg
+    const docRow = await pool.query('SELECT content_type, filename FROM documents WHERE id=$1', [docId]);
+    expect(docRow.rows[0]).toEqual({ content_type: 'image/jpeg', filename: 'upload.jpg' });
+
+    // 4. GET /applications/:applicationId/documents/:documentId/file
+    const fileRes = await request(app)
+      .get(`/applications/${appId}/documents/${docId}/file`)
+      .set('Authorization', userAuth)
+      .expect(200);
+    expect(fileRes.headers['content-type']).toContain('image/jpeg');
+    expect(Buffer.from(fileRes.body).equals(jpegBytes)).toBe(true);
+
+    // Unauthorized file access is rejected
+    await request(app)
+      .get(`/applications/${appId}/documents/${docId}/file`)
+      .set('Authorization', otherAuth)
+      .expect(404);
+
+    // 5. GET /applications/:applicationId/documents
+    const docsRes = await request(app)
+      .get(`/applications/${appId}/documents`)
+      .set('Authorization', userAuth)
+      .expect(200);
+    expect(docsRes.body).toHaveLength(1);
+    expect(docsRes.body[0]).toMatchObject({ id: docId, filename: 'upload.jpg', content_type: 'image/jpeg' });
+
+    await request(app)
+      .get(`/applications/${appId}/documents`)
+      .set('Authorization', otherAuth)
+      .expect(404);
+
+    // 6. GET /applications/:applicationId/audit
+    const auditRes = await request(app)
+      .get(`/applications/${appId}/audit`)
+      .set('Authorization', userAuth)
+      .expect(200);
+    expect(auditRes.body.length).toBeGreaterThanOrEqual(3);
+    expect(auditRes.body.map((e: { event: string }) => e.event)).toContain('document.uploaded');
+
+    await request(app)
+      .get(`/applications/${appId}/audit`)
+      .set('Authorization', otherAuth)
+      .expect(404);
+
+    // 7. GET /applications/:applicationId/result during processing
+    const procResult = await request(app)
+      .get(`/applications/${appId}/result`)
+      .set('Authorization', userAuth)
+      .expect(200);
+    expect(procResult.body).toEqual({ status: 'processing' });
+
+    // Simulate worker completing job with validations: 2 pass, 1 mismatch = 66.7% match score
+    await pool.query(
+      "UPDATE jobs SET status='completed',result_json=$1,updated_at=now() WHERE id=$2",
+      [
+        JSON.stringify({
+          decision: 'needs_review',
+          timings_ms: { ocr: 120, validation: 10, total: 130 },
+        }),
+        jobId,
+      ]
+    );
+    await pool.query("UPDATE applications SET status='needs_review' WHERE id=$1", [appId]);
+    await pool.query(
+      "INSERT INTO validations(id,job_id,field,expected,extracted,result,reason) VALUES " +
+        "('v1',$1,'name','\"Sneha Patel\"','\"Sneha Patel\"','pass','Matched exactly'), " +
+        "('v2',$1,'roll_number','\"SYN-JPEG-001\"','\"SYN-JPEG-001\"','pass','Matched exactly'), " +
+        "('v3',$1,'dob','\"2008-03-15\"','\"2008-03-16\"','mismatch','DOB does not match')",
+      [jobId]
+    );
+
+    // GET result when completed
+    const completedResult = await request(app)
+      .get(`/applications/${appId}/result`)
+      .set('Authorization', userAuth)
+      .expect(200);
+    expect(completedResult.body.status).toBe('completed');
+    expect(completedResult.body.decision).toBe('needs_review');
+    expect(completedResult.body.match_score).toBe(66.7);
+    expect(completedResult.body.validations).toHaveLength(3);
+    expect(completedResult.body.timings).toEqual({ ocr: 120, validation: 10, total: 130 });
+    expect(completedResult.body.created_at).toBeDefined();
+
+    // Other user cannot access result
+    await request(app)
+      .get(`/applications/${appId}/result`)
+      .set('Authorization', otherAuth)
+      .expect(404);
+
+    // 8. GET /reviewer/queue
+    const queueRes = await request(app)
+      .get('/reviewer/queue')
+      .set('Authorization', reviewerAuth)
+      .expect(200);
+    expect(queueRes.body.some((item: { id: string }) => item.id === appId)).toBe(true);
+    const queueItem = queueRes.body.find((item: { id: string }) => item.id === appId);
+    expect(queueItem.status).toBe('needs_review');
+
+    // 9. GET /reviewer/applications/:applicationId
+    const reviewerDetail = await request(app)
+      .get(`/reviewer/applications/${appId}`)
+      .set('Authorization', reviewerAuth)
+      .expect(200);
+    expect(reviewerDetail.body.id).toBe(appId);
+    expect(reviewerDetail.body.status).toBe('needs_review');
+    expect(reviewerDetail.body.documents).toHaveLength(1);
+    expect(reviewerDetail.body.validations).toHaveLength(3);
+    expect(reviewerDetail.body.result.match_score).toBe(66.7);
+    expect(reviewerDetail.body.reviews).toHaveLength(0);
+
+    // 10. POST /reviewer/applications/:applicationId/review
+    // Rejects empty note
+    await request(app)
+      .post(`/reviewer/applications/${appId}/review`)
+      .set('Authorization', reviewerAuth)
+      .send({ decision: 'verified', note: '' })
+      .expect(400);
+
+    // Rejects invalid decision
+    await request(app)
+      .post(`/reviewer/applications/${appId}/review`)
+      .set('Authorization', reviewerAuth)
+      .send({ decision: 'invalid_decision', note: 'Checked manually' })
+      .expect(400);
+
+    // Submits valid review
+    const reviewSubmit = await request(app)
+      .post(`/reviewer/applications/${appId}/review`)
+      .set('Authorization', reviewerAuth)
+      .send({ decision: 'verified', note: 'Mark sheet DOB was confirmed with secondary ID' })
+      .expect(200);
+    expect(reviewSubmit.body.status).toBe('verified');
+    expect(reviewSubmit.body.id).toBeDefined();
+
+    // Verify application status updated to 'verified'
+    const updatedApp = await pool.query('SELECT status FROM applications WHERE id=$1', [appId]);
+    expect(updatedApp.rows[0].status).toBe('verified');
+
+    // Verify review record
+    const storedReview = await pool.query('SELECT decision, note, reviewer_id FROM reviews WHERE application_id=$1', [appId]);
+    expect(storedReview.rows[0]).toEqual({
+      decision: 'verified',
+      note: 'Mark sheet DOB was confirmed with secondary ID',
+      reviewer_id: reviewerLogin.body.user_id || expect.any(String),
+    });
+
+    // Verify audit event 'review.submitted'
+    const reviewAudit = await pool.query("SELECT event, details_json FROM audit_events WHERE application_id=$1 AND event='review.submitted'", [appId]);
+    expect(reviewAudit.rowCount).toBe(1);
+    expect(reviewAudit.rows[0].details_json.decision).toBe('verified');
+
+    // Queue now no longer contains this verified app
+    const updatedQueue = await request(app)
+      .get('/reviewer/queue')
+      .set('Authorization', reviewerAuth)
+      .expect(200);
+    expect(updatedQueue.body.some((item: { id: string }) => item.id === appId)).toBe(false);
+
+    // Reviewer detail now includes the new review
+    const reviewerDetailAfter = await request(app)
+      .get(`/reviewer/applications/${appId}`)
+      .set('Authorization', reviewerAuth)
+      .expect(200);
+    expect(reviewerDetailAfter.body.status).toBe('verified');
+    expect(reviewerDetailAfter.body.reviews).toHaveLength(1);
+  });
 });

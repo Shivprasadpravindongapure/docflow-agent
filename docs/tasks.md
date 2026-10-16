@@ -1,8 +1,10 @@
 # DocFlow Agent: Phased Delivery Tasks
 
-**Status:** Phases 1-5 complete; waiting for owner authorization before Phase 6.
+**Status:** Phases 1-5 complete. Phase 6 simulator implementation and mocked tests pass; its live 100-document synthetic acceptance run is pending. The owner approved this roadmap/documentation update only; no subsequent phase implementation is authorized.
 
-The nine phases below follow section 6 of the supplied PDF plan, with the Python processing agent replacing the separate PDF-only Python microservice and TypeScript processing worker. Work strictly one phase at a time. Phases 1-5 are complete; phases 6-9 require separate owner authorization. For each approved phase, implement only that phase, run its acceptance commands, update its checkboxes, report the actual output, and stop.
+The original nine phases are revised below to reflect the owner's requested future multi-document workflow and required safeguards. The Python processing agent replaces the separate PDF-only Python microservice and TypeScript processing worker. Work strictly one phase at a time; a roadmap approval does not approve implementation. For each separately authorized phase, implement only that phase, run its acceptance commands, update its checkboxes, report actual output, and stop.
+
+**Scope boundary:** marksheets are the only currently supported processing category. The requested target workflow also names caste/category certificates, EWS certificates, fee receipts, nationality certificates, domicile certificates, and income certificates; these are planned only. Each category needs explicit fields/rules and synthetic fixtures before implementation. Never use real applicant data in development, testing, or evaluation. Consistency checks are not authenticity or fraud detection, and the system must not claim an unvalidated “realness” or confidence percentage or auto-reject an applicant.
 
 ## Preconditions and repository facts
 
@@ -97,63 +99,72 @@ The nine phases below follow section 6 of the supplied PDF plan, with the Python
   - Files: `apps/api/src/server.ts`, `apps/api/src/server.test.ts`
   - Proof: `cd apps/api; npm test`; authorization and minimal event-payload tests pass.
 
-**Phase acceptance: PASS.** The API integration suite passed twice (4 tests per run) and the API TypeScript build passed. It streamed queued, processing, and verified status updates for the owner, returned 401/404 to unauthenticated/other-account requests, omitted document contents and tokens, and stopped polling after client disconnect. The web status component tests passed (2 tests); the production build passed; API and web `npm audit` both reported 0 vulnerabilities. A browser smoke test signed in with synthetic values and displayed `needs_review` from a mock status stream without reloading; the database-driven SSE transitions and synthetic PDF worker pipeline are covered separately by integration tests. No real applicant data was used. Stop here; do not start Phase 6 until separately authorized.
+**Phase acceptance: PASS.** The API integration suite passed twice (4 tests per run) and the API TypeScript build passed. It streamed queued, processing, and verified status updates for the owner, returned 401/404 to unauthenticated/other-account requests, omitted document contents and tokens, and stopped polling after client disconnect. The web status component tests passed (2 tests); the production build passed; API and web `npm audit` both reported 0 vulnerabilities. A browser smoke test signed in with synthetic values and displayed `needs_review` from a mock status stream without reloading; the database-driven SSE transitions and synthetic PDF worker pipeline are covered separately by integration tests. No real applicant data was used.
 
 ## Phase 6 — Node live-traffic simulator
 
 **Stop point:** send 100 synthetic applications/uploads through the live system and write measured timings to `eval/results/realtime.csv`.
 
-- [ ] Implement a rate-limited Node simulator that authenticates with credentials from environment variables, selects synthetic answer-key rows, uploads matching PDFs/PNGs, and records submit/start/finish/status/answer-match fields.
+- [x] Implement a rate-limited Node simulator that authenticates with credentials from environment variables, selects synthetic answer-key rows, uploads matching synthetic PDFs or PNGs, and records submit/start/finish/status/answer-match fields.
   - Files: `eval/simulator/run.js`, `eval/simulator/package.json` (if needed), `.env.example`
-  - Proof: `node eval/simulator/run.js --help`; simulator unit tests with mocked API; no credentials in fixtures or logs.
-- [ ] Support a fixed seed and configurable submission rate/count; make the planned 100-document run reproducible in its inputs without fabricating observed times.
+  - Proof: `node eval/simulator/run.js --help`; `node --test eval/simulator/run.test.js`; mocked API verifies the authenticated upload/status path and no credentials are logged.
+- [x] Support a fixed seed and configurable submission rate/count; make the planned 100-document run reproducible in its inputs without fabricating observed times.
   - Files: `eval/simulator/run.js`, `eval/simulator/run.test.js`
-  - Proof: `node --test eval/simulator/run.test.js`.
-- [ ] Write raw per-document timings and outcomes to an ignored CSV; calculate completion rate, median/p95 decision time, failures, and retries only from that CSV.
+  - Proof: `node --test eval/simulator/run.test.js`; fixture selection is deterministic for the same seed.
+- [x] Write raw per-document timings and outcomes to an ignored CSV; calculate completion rate, median/p95 decision time, failures, and retries only from that CSV.
   - Files: `eval/simulator/run.js`, `.gitignore`
-  - Proof: run against local services and inspect `eval/results/realtime.csv`; verify CSV has one real result per submitted synthetic document.
+  - Proof: mocked integration test verifies CSV output; acceptance still requires a live run against local services and `eval/results/realtime.csv` with one observed result per submission.
 
-**Phase acceptance:** `eval/results/realtime.csv` exists after a live 100-document run and contains actual measured timings; simulator tests pass.
+**Phase acceptance: PENDING.** Simulator CLI and tests pass. Run the planned 100 submissions against the configured API/worker/database before recording measured results or marking this phase accepted. The output remains ignored and must not be committed.
 
-## Phase 7 — React screens
+## Phase 7 — Applicant multi-document and reviewer UI
 
-**Stop point:** complete synthetic applicant upload and reviewer approval in the browser.
+**Stop point:** complete an end-to-end synthetic multi-document submission/status and human-review experience in the browser. The processing engine remains marksheet-only in this phase; other requested categories must be clearly marked as planned/not supported, not silently accepted as verified.
 
-- [ ] Implement applicant registration/login, application form, PDF/PNG upload, and submission confirmation using the TypeScript API.
-  - Files: `apps/web/src/App.tsx`, `apps/web/src/api/`, `apps/web/src/pages/Applicant*.tsx`
-  - Proof: `cd apps/web && npm run build`; browser test uploads a synthetic fixture.
-- [ ] Implement status/reviewer queue/document detail with page preview, extracted fields, form comparison, validation reasons, audit trail, approve/reject-with-note; human reviewer remains final.
-  - Files: `apps/web/src/pages/Reviewer*.tsx`, `apps/web/src/components/`, `apps/web/src/api/`
-  - Proof: `cd apps/web && npm run build`; browser test completes reviewer approval and verifies audit entry.
-- [ ] Configure API URL from environment and keep authentication tokens out of persistent browser storage unless a reviewed decision explicitly allows it.
+- [x] Build an applicant workflow with registration/login, application form, a document checklist, multi-file upload, per-file type/size validation, and clear submission confirmation using the TypeScript API. Preserve separate document types and statuses within an application.
+  - Files: `apps/web/src/App.tsx`, `apps/web/src/api/`, `apps/web/src/pages/NewApplication.tsx`, `apps/web/src/pages/ApplicationDetail.tsx`, `apps/web/src/pages/Dashboard.tsx`
+  - Proof: `cd apps/web; npm test; npm run build`; browser flow uploads synthetic marksheets and confirms document status.
+- [x] Implement reviewer queue and document detail with page preview, extracted fields/evidence, applicant-form comparison, validation reasons, audit trail, and approve or return-for-correction with a required note. Do not add an authenticity/fraud verdict or automatic rejection.
+  - Files: `apps/web/src/pages/ReviewerQueue.tsx`, `apps/web/src/pages/ReviewerDetail.tsx`, `apps/api/src/server.ts`, `apps/api/src/server.test.ts`
+  - Proof: API/UI tests verify per-document ownership, reviewer authorization, required note, audit event, and human-controlled final decision using synthetic records.
+- [x] Configure API URL from environment and keep authentication tokens out of persistent browser storage unless a reviewed decision explicitly allows it.
   - Files: `apps/web/src/api/client.ts`, `apps/web/vite.config.ts`, `.env.example`
   - Proof: `cd apps/web && npm run build`; configuration and auth tests pass.
 
-**Phase acceptance:** browser flow completes synthetic upload, live status, reviewer inspection, and approval; no real data is used.
+**Phase acceptance: PASS.** Full React router architecture with dashboard, creation, upload, live SSE tracking, field comparison, reviewer queue, reviewer detail decision recording, and document file retrieval implemented. API endpoints (`/applications/:id/result`, `/applications/:id/documents`, `/applications/:id/documents/:docId/file`, `/applications/:id/audit`, `/reviewer/queue`, `/reviewer/applications/:id`, `/reviewer/applications/:id/review`, JPEG upload) verified with integration tests (`npm test` in `apps/api` passed 5/5; `apps/web` passed 2/2 and built in 933ms).
 
-## Phase 8 — Deploy
+## Phase 8 — Security, privacy, and safe deployment readiness
 
-**Stop point:** deployed web, Express API, Python agent, and database operate together on free-tier infrastructure; cold starts are documented.
+**Stop point:** security/privacy controls are tested and a synthetic-only demo can be deployed on free-tier infrastructure. This phase does not authorize processing real applicant records or claim production readiness.
 
-- [ ] Add container/runtime configuration for Express API, Python agent/worker, health checks, resource limits, and private service connectivity.
+- [ ] Threat-model API, worker, document storage, browser sessions, SSE, and reviewer access. Add least-privilege applicant/reviewer roles, object-level authorization, request/file limits, safe logging, and authentication/private networking for every processing endpoint; remove public access to local document paths.
+  - Files: `apps/api/src/`, `services/agent/app/`, migrations, tests, `docs/`
+  - Proof: tests cover unauthenticated and cross-account access, reviewer role boundaries, upload limits, and no document contents/secrets in logs or status events.
+- [ ] Define and implement synthetic-demo data lifecycle controls: encryption in transit/at rest where supported, retention/deletion behavior, audit coverage, backup/restore procedures, and incident/monitoring expectations. Ask before adopting paid services.
+  - Files: storage/API/worker configuration, migrations, `docs/`
+  - Proof: automated deletion/access tests and documented restore/operations checks use synthetic fixtures only.
+- [ ] Add container/runtime configuration for the Express API, private Python agent/worker, health checks, resource limits, and service connectivity; deploy only the synthetic demo.
   - Files: `apps/api/Dockerfile`, `services/agent/Dockerfile`, `infra/docker-compose.yml`, `render.yaml`
-  - Proof: `docker compose config`; local `docker compose up` health checks for API and Python agent.
-- [ ] Configure free-tier PostgreSQL/API/PDF deployment and Vercel web build without hard-coded secrets or public unauthenticated PDF handling.
+  - Proof: `docker compose config`; local health checks; deployment smoke test uses a synthetic account and generated documents only.
+- [ ] Configure free-tier PostgreSQL/API/agent deployment and web build without hard-coded secrets or public unauthenticated document handling.
   - Files: `render.yaml`, `apps/web/vercel.json` (if needed), `.env.example`, `docs/DEPLOY.md`
-  - Proof: run deployed `/health` checks and synthetic upload/review smoke test; record cold-start observations from actual runs.
-- [ ] Document setup, environment variables, synthetic demo accounts, and operational limits.
+  - Proof: deployed health checks and synthetic multi-document upload/review smoke test; record cold-start observations from actual runs.
+- [ ] Document setup, environment variables, synthetic demo accounts, operational limits, privacy assumptions, and explicit non-production limitations.
   - Files: `docs/DEPLOY.md`, `README.md`
   - Proof: follow the documented deployment procedure from a clean environment.
 
-**Phase acceptance:** Render/API/agent and Vercel links work with the synthetic demo from a phone/browser; no paid service is added without owner approval.
+**Phase acceptance:** deployed links operate with synthetic data only; security tests pass; no paid service is added without owner approval. This is not approval to upload or process real student/applicant records.
 
-## Phase 9 — Evaluation and finish
+## Phase 9 — Category-by-category synthetic evaluation and finish
 
-**Stop point:** full synthetic accuracy and live simulator results are reproducible, and README metrics exactly match generated output files.
+**Stop point:** each separately approved document category has versioned, explainable deterministic rules, synthetic fixtures/answer keys, measured field-level results, and stated limitations. No category is assumed supported merely because it appears in the requested product target.
 
-- [ ] Run full synthetic image/PDF accuracy evaluation and report valid/mismatch counts, field accuracy, false flags, missed mismatches, and limitations from the generated artifacts only.
-  - Files: `eval/run-eval.ts` or the repository's TypeScript evaluation entry point, `eval/results/`, `README.md`
-  - Proof: run the documented evaluation command; compare every README number programmatically or manually to its output file.
+- [ ] For each individually approved added category, define an authority/source-neutral schema and deterministic checks with explicit evidence and human-review outcomes; add synthetic-only generators/fixtures and labeled expected outcomes. Do not add issuer-authenticity checks, fraud scoring, or a final-decision model.
+  - Files: `services/agent/app/processing/`, `services/agent/tests/`, `eval/`
+  - Proof: category-specific tests verify pass/mismatch/missing evidence and that uncertainty routes to human review; all records are synthetic.
+- [ ] Run per-category synthetic evaluation and report field-level extraction/validation measures, false flags, missed planted mismatches, sample size, and limitations from generated artifacts only.
+  - Files: `eval/`, `eval/results/`, `README.md`
+  - Proof: documented evaluation command; outputs identify category and dataset version; README values match actual result files. Never label a synthetic result as real-world accuracy or genuineness probability.
 - [ ] Run the Node simulator and preserve `eval/results/realtime.csv` plus its summary with the actual run configuration and measurements.
   - Files: `eval/simulator/run.js`, `eval/results/realtime.csv`, `eval/results/`
   - Proof: rerun the documented simulator command against the live synthetic system; verify completion/timing values derive from CSV rows.
@@ -161,4 +172,4 @@ The nine phases below follow section 6 of the supplied PDF plan, with the Python
   - Files: project test/build manifests, `.gitignore`, `README.md`
   - Proof: `cd apps/api && npm test`; `cd services/agent && pytest`; `cd apps/web && npm run build`; `git status --short`; `git ls-files .env eval/data`.
 
-**Phase acceptance:** nine phase checklists are complete, all acceptance commands have actual results, README metrics match `eval/results/`, and `.env`/`eval/data/` are not tracked.
+**Phase acceptance:** all authorized synthetic acceptance commands have actual results, README metrics match `eval/results/`, and `.env`/`eval/data/` are not tracked. Real-data use is outside repository development, testing, and evaluation; any future external pilot would require independent legal, privacy, security, and institutional approvals and is not authorized by this plan.

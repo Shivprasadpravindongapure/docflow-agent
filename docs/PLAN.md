@@ -2,7 +2,9 @@
 
 ## Goal
 
-Build a live marksheet submission and review workflow that can be exercised end to end with synthetic applicants and synthetic documents. Processing is synchronous/asynchronous as appropriate for the service, but “live” never means using real student data for development, testing, or evaluation.
+Build a document submission and human-review workflow that can be exercised end to end using synthetic applicants and synthetic documents only. The owner has requested a future target scope covering marksheets, caste/category certificates, EWS certificates, fee receipts, nationality certificates, domicile certificates, and income certificates. This is a planning decision, not implementation authorization: the current supported V1 remains marksheets only until each additional category has approved field definitions, validation rules, synthetic fixtures, and acceptance criteria.
+
+“Live” means processing requests through the running application; it never authorizes real student/applicant data in this repository's development, testing, or evaluation.
 
 ## Agreed architecture
 
@@ -23,15 +25,25 @@ Build a live marksheet submission and review workflow that can be exercised end 
 - Keep generated files and answer keys under `eval/data/`, which must remain gitignored.
 - Mark planted mismatches in the answer key and report valid and mismatched documents separately.
 - Every validation flag includes `field`, `expected`, `extracted`, and `reason`.
-- The system returns `verified`, `needs_review`, or `missing`; it never auto-rejects.
+- Rule-based checks can report extracted values and consistency with applicant-provided information; they cannot establish that an issuer created a document or that it is genuine.
+- Never expose a percentage as a probability of authenticity or fraud. Any future extraction/validation metric must be measured on the synthetic evaluation set, state exactly what it measures, and must not be described as real-world accuracy.
+- Return explainable processing states such as `verified`, `needs_review`, or `missing`; the system does not auto-reject, detect fraud, or make final eligibility decisions. A human reviewer is responsible for consequential decisions.
 - Report only measurements from committed evaluation output files; label synthetic metrics as synthetic and avoid claiming real-world accuracy.
 - Use environment variables for credentials; never commit secrets or generated data.
 - Stay on free-tier services; ask before adding any paid service.
+- Keep the processing API private and authenticated before deployment; add role-based authorization, private storage, encryption, retention/deletion rules, audit controls, backup/restore checks, and operational monitoring before considering any real-world pilot outside this synthetic-only repository.
 
 ## Delivery plan
 
-The authoritative phase-by-phase task list, file scope, acceptance commands, and stop points are in [tasks.md](tasks.md). Complete phases 1 through 9 in order, one phase per owner approval. No feature phase begins until the owner approves the plan. At every phase boundary, stop and report the real command output; do not proceed until told “next phase.”
+The authoritative phase-by-phase task list, file scope, acceptance commands, and stop points are in [tasks.md](tasks.md). Phases 1 through 5 are complete. Phase 6's simulator implementation and mocked tests exist, but the live 100-document acceptance run is pending. The proposed next phases are:
+
+1. Finish Phase 6 with a measured synthetic run.
+2. Build Phase 7 applicant multi-document submission/status and reviewer screens. Keep actual supported processing marksheet-only until category-specific scope is approved.
+3. Use Phase 8 for security/privacy controls and deployment readiness; do not deploy publicly while unauthenticated processing routes or missing safeguards remain.
+4. Use Phase 9 for category-by-category synthetic fixtures/rules, evaluation, and final documentation. Additional document categories in the requested target scope must not be treated as implemented by this plan update.
+
+Work strictly one phase at a time. The owner approved only this planning/documentation update, not implementation of the next phase. At every phase boundary, stop and report actual command output; do not proceed until separately authorized.
 
 ## Repository alignment note
 
-The applicant-facing Express API remains TypeScript; Python processing lives in `services/agent`. The repository's previous Python evaluation utility is not the planned Node traffic simulator; the simulator remains a future phase. Do not create a separate `services/pdf` service. The referenced `docs/DocFlow-Python-PDF-Plan.pdf` was not found in the repository during planning; the tasks were derived from the plan text supplied by the owner. Add the original PDF before treating it as a checked-in source document.
+The applicant-facing Express API remains TypeScript; Python processing lives in `services/agent`. Do not create a separate `services/pdf` service. The Node simulator is in `eval/simulator`; its live acceptance run remains pending. The referenced `docs/DocFlow-Python-PDF-Plan.pdf` was not found in the repository during planning; the tasks were derived from the plan text supplied by the owner. Add the original PDF before treating it as a checked-in source document.

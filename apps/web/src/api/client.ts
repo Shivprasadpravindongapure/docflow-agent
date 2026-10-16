@@ -5,6 +5,60 @@ export const API_BASE_URL = (
 export interface ApplicationSummary {
   id: string;
   status: string;
+  created_at?: string;
+  form_json?: Record<string, unknown>;
+}
+
+export interface ValidationFlag {
+  field: string;
+  expected: string | number | null;
+  extracted: string | number | null;
+  result: 'pass' | 'mismatch' | 'missing';
+  reason: string;
+}
+
+export interface VerificationResult {
+  status: string;
+  decision?: string;
+  match_score?: number;
+  validations?: ValidationFlag[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DocumentInfo {
+  id: string;
+  filename: string;
+  content_type: string;
+  created_at: string;
+}
+
+export interface AuditEvent {
+  id: string;
+  event: string;
+  details_json: Record<string, unknown>;
+  created_at: string;
+  actor_id: string | null;
+}
+
+export interface ReviewQueueItem {
+  id: string;
+  status: string;
+  form_json: Record<string, unknown>;
+  created_at: string;
+  user_id: string;
+}
+
+export interface ReviewerAppDetail {
+  id: string;
+  status: string;
+  form_json: Record<string, unknown>;
+  created_at: string;
+  documents: DocumentInfo[];
+  result: VerificationResult | null;
+  validations: ValidationFlag[];
+  audit: AuditEvent[];
+  reviews: Array<{ id: string; decision: string; note: string; created_at: string; reviewer_id: string }>;
 }
 
 interface ApiError {
@@ -21,9 +75,15 @@ function isApiError(value: unknown): value is ApiError {
 }
 
 async function readError(response: Response): Promise<string> {
-  const body: unknown = await response.json();
-  if (isApiError(body) && body.error) return body.error;
+  try {
+    const body: unknown = await response.json();
+    if (isApiError(body) && body.error) return body.error;
+  } catch {}
   return `Request failed with status ${response.status}.`;
+}
+
+function authHeaders(token: string): Record<string, string> {
+  return { Authorization: `Bearer ${token}` };
 }
 
 export async function register(email: string, password: string): Promise<void> {
@@ -42,14 +102,8 @@ export async function login(email: string, password: string): Promise<string> {
     body: JSON.stringify({ email, password }),
   });
   if (!response.ok) throw new Error(await readError(response));
-
   const body: unknown = await response.json();
-  if (
-    typeof body !== 'object' ||
-    body === null ||
-    !('token' in body) ||
-    typeof body.token !== 'string'
-  ) {
+  if (typeof body !== 'object' || body === null || !('token' in body) || typeof body.token !== 'string') {
     throw new Error('The API returned an invalid sign-in response.');
   }
   return body.token;
@@ -57,24 +111,107 @@ export async function login(email: string, password: string): Promise<string> {
 
 export async function listApplications(token: string): Promise<ApplicationSummary[]> {
   const response = await fetch(`${API_BASE_URL}/applications`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: authHeaders(token),
   });
   if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
 
-  const body: unknown = await response.json();
-  if (
-    !Array.isArray(body) ||
-    !body.every(
-      (item) =>
-        typeof item === 'object' &&
-        item !== null &&
-        'id' in item &&
-        typeof item.id === 'string' &&
-        'status' in item &&
-        typeof item.status === 'string',
-    )
-  ) {
-    throw new Error('The API returned an invalid applications response.');
-  }
-  return body;
+export async function createApplication(
+  token: string,
+  form: { name: string; roll_number: string; dob: string; year: number; board?: string; total?: number }
+): Promise<{ id: string; status: string }> {
+  const response = await fetch(`${API_BASE_URL}/applications`, {
+    method: 'POST',
+    headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(form),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function uploadDocument(
+  token: string,
+  applicationId: string,
+  file: File
+): Promise<{ document_id: string; job_id: string; status: string }> {
+  const response = await fetch(
+    `${API_BASE_URL}/applications/${encodeURIComponent(applicationId)}/documents`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders(token), 'Content-Type': file.type },
+      body: file,
+    }
+  );
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function getApplicationDetail(token: string, id: string): Promise<ApplicationSummary> {
+  const response = await fetch(`${API_BASE_URL}/applications/${encodeURIComponent(id)}`, {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function getVerificationResult(token: string, applicationId: string): Promise<VerificationResult> {
+  const response = await fetch(
+    `${API_BASE_URL}/applications/${encodeURIComponent(applicationId)}/result`,
+    { headers: authHeaders(token) }
+  );
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function getDocuments(token: string, applicationId: string): Promise<DocumentInfo[]> {
+  const response = await fetch(
+    `${API_BASE_URL}/applications/${encodeURIComponent(applicationId)}/documents`,
+    { headers: authHeaders(token) }
+  );
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function getAuditEvents(token: string, applicationId: string): Promise<AuditEvent[]> {
+  const response = await fetch(
+    `${API_BASE_URL}/applications/${encodeURIComponent(applicationId)}/audit`,
+    { headers: authHeaders(token) }
+  );
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function getReviewQueue(token: string): Promise<ReviewQueueItem[]> {
+  const response = await fetch(`${API_BASE_URL}/reviewer/queue`, {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function getReviewerAppDetail(token: string, applicationId: string): Promise<ReviewerAppDetail> {
+  const response = await fetch(
+    `${API_BASE_URL}/reviewer/applications/${encodeURIComponent(applicationId)}`,
+    { headers: authHeaders(token) }
+  );
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function submitReview(
+  token: string,
+  applicationId: string,
+  decision: 'verified' | 'needs_review' | 'missing',
+  note: string
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/reviewer/applications/${encodeURIComponent(applicationId)}/review`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision, note }),
+    }
+  );
+  if (!response.ok) throw new Error(await readError(response));
 }

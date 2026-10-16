@@ -1,8 +1,16 @@
 # DocFlow Agent
 
-DocFlow Agent is planned as a live marksheet review workflow, exercised with synthetic applicants and documents only. The React UI and Express application API stay in TypeScript; a Python agent service handles PDF processing, OCR, extraction, validation, and background jobs. The traffic simulator remains Node.js.
+DocFlow Agent is currently a synthetic marksheet-processing and human-review prototype. The requested future workflow includes marksheets, caste/category certificates, EWS certificates, fee receipts, nationality certificates, domicile certificates, and income certificates. Those additional categories are roadmap scope only; they are not implemented or supported. The React UI and Express application API stay in TypeScript; a Python agent service handles PDF processing, OCR, extraction, validation, and background jobs. The traffic simulator remains Node.js.
 
-**Status:** Phases 1-5 are complete: reproducible synthetic PDFs, a Python processing pipeline, a PostgreSQL-backed Express API and worker, and a live applicant status preview are available. Document submission/reviewer screens, simulator, and deployment are later phases. Use synthetic documents only.
+**Status:** Phases 1-5 are complete. The Phase 6 Node simulator and its mocked-API tests are implemented; the required 100-document live synthetic run still needs to be performed against configured local services. The owner approved a roadmap/documentation update only; no Phase 7+ implementation is authorized yet. Use synthetic documents only.
+
+## Scope and decision safeguards
+
+- Only marksheets are currently supported. Additional document categories need their own approved fields, deterministic validation rules, synthetic fixtures, and acceptance tests before implementation.
+- Use synthetic applicant/document data only in repository development, testing, and evaluation. Do not upload or process real student/applicant records.
+- Extracted values and rule checks show whether supplied information is present and consistent; they do not prove issuer authenticity or detect fraud. Do not show an unvalidated “genuine” probability or automatically reject applicants.
+- Keep consequential decisions with an authorized human reviewer and show evidence/reasons for review.
+- Deployment described by the roadmap is a synthetic demo only, not production approval.
 
 ## Stack
 
@@ -69,6 +77,20 @@ npm run build
 ```
 
 Phase-specific evaluation output is written to the ignored `eval/results/` directory. Only report metrics emitted by an actual evaluation/simulator run.
+
+## Phase 6 synthetic traffic simulator
+
+Generate the synthetic PDF set with `python eval/pdf/generate_pdfs.py --seed 2027`. Start the Express API and Python worker against the same development database, then register a synthetic account. Keep its email and password in the ignored local `.env`; `.env.example` contains placeholders only. From the repository root, run:
+
+```powershell
+node --env-file=.env eval/simulator/run.js --count 100 --seed 2027 --rate-per-second 2
+```
+
+The simulator authenticates using `SIMULATOR_EMAIL` and `SIMULATOR_PASSWORD`, submits only generated marksheets, observes the application status stream, and writes raw per-document events/timings to the ignored `eval/results/realtime.csv`. It reports completion, timing, failure, retry, and answer-match summaries derived from that CSV. The fixed seed reproduces fixture selection; it does not fabricate run timings. Planted `board` and `result` mismatches are marked `not_evaluated` because the current deterministic validator does not compare those fields. These results are not authenticity checks, fraud detection, or a real-world accuracy rate.
+
+For PNG fixtures, run with `--answer-key eval/data/answer_key.csv --documents-dir eval/data/images`; the default paths use the generated PDF set.
+
+The simulator supports `--help` for all options. It refuses to replace an existing output CSV unless `--overwrite` is explicitly supplied. Its tests use a mocked API; the separate 100-document acceptance run requires a running API, worker, database, valid synthetic account, generated fixture files, and Tesseract for scanned PDFs.
 
 ## React status preview
 
