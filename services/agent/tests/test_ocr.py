@@ -1,9 +1,16 @@
 from io import BytesIO
+import subprocess
 
 from PIL import Image
 import pytest
 
-from services.agent.app.processing.ocr import InvalidImageError, OcrUnavailableError, preprocess_image, run_ocr
+from services.agent.app.processing.ocr import (
+    InvalidImageError,
+    OcrTimeoutError,
+    OcrUnavailableError,
+    preprocess_image,
+    run_ocr,
+)
 
 
 def png_bytes() -> bytes:
@@ -26,6 +33,15 @@ def test_preprocessing_rejects_non_image_bytes():
         preprocess_image(b"not an image")
 
 
+def test_preprocessing_rejects_images_over_pixel_limit():
+    image = Image.new("RGB", (2001, 2000), "white")
+    output = BytesIO()
+    image.save(output, format="PNG")
+
+    with pytest.raises(InvalidImageError, match="4 million pixels"):
+        preprocess_image(output.getvalue())
+
+
 def test_ocr_reports_tesseract_missing(monkeypatch):
     import services.agent.app.processing.ocr as ocr
 
@@ -34,4 +50,15 @@ def test_ocr_reports_tesseract_missing(monkeypatch):
 
     monkeypatch.setattr(ocr.pytesseract, "image_to_string", no_tesseract)
     with pytest.raises(OcrUnavailableError, match="Install Tesseract"):
+        run_ocr(png_bytes())
+
+
+def test_ocr_reports_tesseract_timeout(monkeypatch):
+    import services.agent.app.processing.ocr as ocr
+
+    def timed_out(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd="tesseract", timeout=30)
+
+    monkeypatch.setattr(ocr.pytesseract, "image_to_string", timed_out)
+    with pytest.raises(OcrTimeoutError, match="30-second processing limit"):
         run_ocr(png_bytes())

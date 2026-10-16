@@ -29,11 +29,18 @@ def test_evaluator_calculates_and_writes_measured_metrics(tmp_path):
         )
         validations = validate(application, extracted)
         return ProcessingResult(
+            input_type="image",
             ocr_text="synthetic test OCR",
             extracted=extracted,
             validations=validations,
             decision=decide(validations),
-            timings_ms={"ocr": 1.0, "extraction": 2.0, "validation": 3.0, "total": 6.0},
+            timings_ms={
+                "document": 0.0,
+                "ocr": 1.0,
+                "extraction": 2.0,
+                "validation": 3.0,
+                "total": 6.0,
+            },
         )
 
     metrics = run_evaluation(

@@ -15,7 +15,7 @@ Build a live marksheet submission and review workflow that can be exercised end 
 
 ## Python agent service contract
 
-`GET /health` returns `{"status":"ok","service":"agent"}`. `POST /extract` accepts a synthetic PDF upload up to 2 MB and at most 5 pages. It returns page count, text per page where selectable text exists, and PNG page images for image-only/scanned pages. Use pdfplumber for text extraction and PyMuPDF for rendering. The agent then runs OCR on rendered/image inputs, extracts supported marksheet fields, applies deterministic rules, and stores explainable results. Keep authentication and applicant-facing APIs in Express.
+`GET /health` returns `{"status":"ok","service":"agent"}`. `POST /extract` accepts a synthetic PDF upload up to 2 MB and at most 5 pages. It returns page count, text per page where selectable text exists, and PNG page images for image-only/scanned pages. `POST /process` accepts a synthetic PDF, PNG, or JPEG and application fields, runs OCR or reads selectable PDF text, extracts supported marksheet fields, applies deterministic rules, and returns explainable field evidence, a review state, and stage timings. Uploads are processed in memory. This processing route is unauthenticated and local-only; do not expose it or send it real student records. Keep authentication and applicant-facing APIs in Express.
 
 ## Data and decision safeguards
 

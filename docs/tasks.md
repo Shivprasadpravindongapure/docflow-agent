@@ -1,8 +1,8 @@
 # DocFlow Agent: Phased Delivery Tasks
 
-**Status:** Phases 1 and 2 complete; waiting for owner authorization before Phase 3.
+**Status:** Phases 1-3 complete; waiting for owner authorization before Phase 4.
 
-The nine phases below follow section 6 of the supplied PDF plan, with the Python processing agent replacing the separate PDF-only Python microservice and TypeScript processing worker. Work strictly one phase at a time. Phases 1 and 2 are complete; phases 3-9 require separate owner authorization. For each approved phase, implement only that phase, run its acceptance commands, update its checkboxes, report the actual output, and stop.
+The nine phases below follow section 6 of the supplied PDF plan, with the Python processing agent replacing the separate PDF-only Python microservice and TypeScript processing worker. Work strictly one phase at a time. Phases 1-3 are complete; phases 4-9 require separate owner authorization. For each approved phase, implement only that phase, run its acceptance commands, update its checkboxes, report the actual output, and stop.
 
 ## Preconditions and repository facts
 
@@ -49,20 +49,20 @@ The nine phases below follow section 6 of the supplied PDF plan, with the Python
 
 **Stop point:** the Python agent processes text and scanned PDFs through OCR/extraction and deterministic validation, returning explainable decisions and timings.
 
-- [ ] Add a processing endpoint for PDF and image inputs that accepts the application-form fields and returns OCR/extraction/validation evidence, decision state, and per-stage timing. Keep the endpoint synthetic-only until authenticated API integration exists.
-  - Files: `services/agent/app/main.py`, `services/agent/app/schemas.py`, `services/agent/tests/test_pipeline_api.py`
-  - Proof: `cd services/agent; pytest`; FastAPI tests submit generated synthetic PDF/image fixtures and assert response schema and size/type errors.
-- [ ] Implement marksheet OCR using Tesseract and preprocessing for image uploads and rendered scanned PDF pages; define explicit OCR executable errors and timeouts.
-  - Files: `services/agent/app/ocr.py`, `services/agent/tests/test_ocr.py`, `services/agent/requirements.txt`
-  - Proof: `cd services/agent; pytest`; synthetic image/scanned-PDF fixtures exercise OCR and missing-executable failures.
-- [ ] Implement schema-checked field extraction (Gemini optional; local deterministic extraction for tests/default) and ground model values in OCR text.
-  - Files: `services/agent/app/extract.py`, `services/agent/app/schemas.py`, `services/agent/tests/test_extract.py`
-  - Proof: `cd services/agent; pytest`; mock model calls and assert invalid/ungrounded fields become null with warnings.
-- [ ] Implement deterministic validation, per-field evidence, decision states, and stage timings for PDF and image inputs.
-  - Files: `services/agent/app/validate.py`, `services/agent/app/pipeline.py`, `services/agent/app/main.py`, `services/agent/tests/`
-  - Proof: `cd services/agent; pytest`; synthetic text and scanned PDFs reach `verified`, `needs_review`, and `missing` cases without auto-rejection.
+- [x] Add a processing endpoint for PDF and image inputs that accepts the application-form fields and returns OCR/extraction/validation evidence, decision state, and per-stage timing. Keep the endpoint synthetic-only until authenticated API integration exists.
+  - Files: `services/agent/app/main.py`, `services/agent/app/processing/models.py`, `services/agent/app/processing/pipeline.py`, `services/agent/tests/test_processing_api.py`
+  - Proof: `python -m pytest services/agent/tests`; FastAPI tests submit generated synthetic PDF/image fixtures and assert response schema and size/type errors.
+- [x] Implement marksheet OCR using Tesseract and preprocessing for image uploads and rendered scanned PDF pages; define explicit OCR executable errors, image limits, and timeouts.
+  - Files: `services/agent/app/processing/ocr.py`, `services/agent/tests/test_ocr.py`
+  - Proof: `python -m pytest services/agent/tests`; synthetic image/scanned-PDF fixtures exercise OCR, image bounds, and missing-executable/timeout failures.
+- [x] Implement schema-checked field extraction (Gemini optional; local deterministic extraction for tests/default) and ground model values in OCR text.
+  - Files: `services/agent/app/processing/extract.py`, `services/agent/app/processing/models.py`, `services/agent/tests/test_extraction.py`, `services/agent/tests/test_gemini_extraction.py`
+  - Proof: `python -m pytest services/agent/tests`; mocked model calls assert invalid/ungrounded fields become null with warnings.
+- [x] Implement deterministic validation, per-field evidence, decision states, and stage timings for PDF and image inputs.
+  - Files: `services/agent/app/processing/validate.py`, `services/agent/app/processing/pipeline.py`, `services/agent/app/main.py`, `services/agent/tests/`, `eval/test_run_eval.py`
+  - Proof: `python -m pytest services/agent/tests`; synthetic text/scanned PDFs and images reach `verified`, `needs_review`, and `missing` cases without auto-rejection.
 
-**Phase acceptance:** one synthetic text PDF and one scanned PDF reach rule-based decisions through the Python agent; tests pass and stage timings are returned.
+**Phase acceptance: PASS.** `python -m pytest services/agent/tests -q` passed twice (40 tests per run); the full Python suite `python -m pytest -q` passed (47 tests). Synthetic text PDFs, scanned PDFs, PNG, and JPEG requests cover all three decision states, validation evidence, size/type limits, and stage timings. OCR is mocked for deterministic end-to-end scan tests; the local environment does not have the Tesseract executable, and the service reports this explicitly until it is installed. The endpoint remains unauthenticated and synthetic/local-only; do not expose it or submit real student records. No API key is needed for the default regex extractor. Do not start Phase 4 until separately authorized.
 
 ## Phase 4 — Database and API
 

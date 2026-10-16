@@ -23,11 +23,17 @@ def test_pipeline_runs_ocr_extraction_validation_and_decision(monkeypatch):
         total=300,
     )
 
-    result = pipeline.analyze_document(b"synthetic image", application, provider="regex")
+    result = pipeline.analyze_document(
+        b"synthetic image",
+        application,
+        provider="regex",
+        content_type="image/png",
+    )
 
+    assert result.input_type == "image"
     assert result.ocr_text == OCR_TEXT
     assert result.extracted.name == "Aarav Sharma"
     assert all(item.result == "pass" for item in result.validations)
     assert result.decision == "verified"
-    assert set(result.timings_ms) == {"ocr", "extraction", "validation", "total"}
+    assert set(result.timings_ms) == {"document", "ocr", "extraction", "validation", "total"}
     assert all(value >= 0 for value in result.timings_ms.values())
