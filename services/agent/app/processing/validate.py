@@ -1,133 +1,162 @@
-import re
-from typing import Sequence
-
-from rapidfuzz.fuzz import ratio
-
-from .models import ApplicationForm, Decision, ExtractedFields, FieldValidation, normalize_date
-
-_NAME_THRESHOLD = 90.0
+"""
+Internal consistency validation.
+Does NOT cross-check against user-provided form data (we may not have real data).
+Instead checks whether the document's own fields are internally consistent.
+"""
+from .models import Decision, ExtractedDocument, FieldValidation
 
 
-def _normalize_exact(value: str) -> str:
-    return re.sub(r"\s+", "", value).casefold()
-
-
-def _missing(field: str, expected: str | int | None) -> FieldValidation:
-    return FieldValidation(
-        field=field,
-        expected=expected,
-        extracted=None,
-        result="missing",
-        reason=f"{field} was not found in the extracted document.",
-    )
-
-
-def _compare_exact(
-    field: str,
-    expected: str,
-    extracted: str | None,
-    description: str,
-) -> FieldValidation:
-    if extracted is None:
-        return _missing(field, expected)
-    passed = _normalize_exact(expected) == _normalize_exact(extracted)
-    return FieldValidation(
-        field=field,
-        expected=expected,
-        extracted=extracted,
-        result="pass" if passed else "mismatch",
-        reason=f"{description} {'matches' if passed else 'does not match'} after normalization.",
-    )
-
-
-def validate(application: ApplicationForm, extracted: ExtractedFields) -> list[FieldValidation]:
+def validate_internal(extracted: ExtractedDocument) -> list[FieldValidation]:
+    """
+    Run rule-based internal consistency checks on the extracted document.
+    Returns a list of FieldValidation items for the UI table.
+    """
     results: list[FieldValidation] = []
 
-    if extracted.name is None:
-        results.append(_missing("name", application.name))
+    # 1. Student name present
+    results.append(FieldValidation(
+        field="student_name",
+        expected="present",
+        extracted=extracted.student_name,
+        result="pass" if extracted.student_name else "missing",
+        reason="Student name was found in the document." if extracted.student_name
+               else "Student name was not extracted from the document.",
+    ))
+
+    # 2. Roll / seat number present
+    roll = extracted.roll_number or extracted.seat_number
+    results.append(FieldValidation(
+        field="roll_number",
+        expected="present",
+        extracted=roll,
+        result="pass" if roll else "missing",
+        reason="Roll / seat number was found." if roll
+               else "Roll / seat number not found in document.",
+    ))
+
+    # 3. Exam year in valid range
+    if extracted.exam_year:
+        try:
+            y = int(extracted.exam_year)
+            valid = 1990 <= y <= 2030
+        except ValueError:
+            valid = False
+        results.append(FieldValidation(
+            field="exam_year",
+            expected="1990–2030",
+            extracted=extracted.exam_year,
+            result="pass" if valid else "mismatch",
+            reason=f"Exam year {extracted.exam_year} {'is' if valid else 'is NOT'} in the valid range 1990–2030.",
+        ))
     else:
-        score = ratio(" ".join(application.name.casefold().split()), " ".join(extracted.name.casefold().split()))
-        passed = score >= _NAME_THRESHOLD
-        results.append(
-            FieldValidation(
-                field="name",
-                expected=application.name,
-                extracted=extracted.name,
-                result="pass" if passed else "mismatch",
-                reason=(
-                    f"Name similarity score {score / 100:.2f} "
-                    f"{'meets' if passed else 'is below'} the 0.90 threshold."
-                ),
-            )
+        results.append(FieldValidation(
+            field="exam_year",
+            expected="1990–2030",
+            extracted=None,
+            result="missing",
+            reason="Exam year was not extracted from the document.",
+        ))
+
+    # 4. Subject marks sum ≈ total
+    if extracted.subjects and extracted.total_marks_obtained is not None:
+        calculated = sum(
+            s.marks_obtained for s in extracted.subjects if s.marks_obtained is not None
         )
+        diff = abs(calculated - extracted.total_marks_obtained)
+        match = diff <= 2  # allow ±2 rounding tolerance
+        results.append(FieldValidation(
+            field="total_marks",
+            expected=str(calculated),
+            extracted=str(extracted.total_marks_obtained),
+            result="pass" if match else "mismatch",
+            reason=(
+                f"Sum of subject marks ({calculated}) matches declared total ({extracted.total_marks_obtained})."
+                if match else
+                f"Sum of subject marks ({calculated}) does NOT match declared total ({extracted.total_marks_obtained}). Difference: {diff}."
+            ),
+        ))
+    elif extracted.total_marks_obtained is not None:
+        results.append(FieldValidation(
+            field="total_marks",
+            expected="present",
+            extracted=str(extracted.total_marks_obtained),
+            result="pass",
+            reason=f"Total marks declared as {extracted.total_marks_obtained}.",
+        ))
 
-    results.append(_compare_exact("roll_number", application.roll_number, extracted.roll_number, "Roll number"))
+    # 5. Percentage matches marks
+    if (
+        extracted.percentage is not None
+        and extracted.total_marks_obtained is not None
+        and extracted.total_max_marks is not None
+        and extracted.total_max_marks > 0
+    ):
+        computed_pct = round(extracted.total_marks_obtained / extracted.total_max_marks * 100, 1)
+        diff = abs(computed_pct - extracted.percentage)
+        match = diff <= 1.0  # ±1% tolerance
+        results.append(FieldValidation(
+            field="percentage",
+            expected=str(computed_pct),
+            extracted=str(extracted.percentage),
+            result="pass" if match else "mismatch",
+            reason=(
+                f"Computed percentage ({computed_pct}%) matches declared ({extracted.percentage}%)."
+                if match else
+                f"Computed percentage ({computed_pct}%) does NOT match declared ({extracted.percentage}%). Difference: {diff:.1f}%."
+            ),
+        ))
 
-    expected_dob = normalize_date(application.dob)
-    extracted_dob = normalize_date(extracted.dob) if extracted.dob is not None else None
-    if extracted.dob is None:
-        results.append(_missing("dob", application.dob))
-    else:
-        passed = expected_dob is not None and expected_dob == extracted_dob
-        results.append(
-            FieldValidation(
-                field="dob",
-                expected=application.dob,
-                extracted=extracted.dob,
-                result="pass" if passed else "mismatch",
-                reason=(
-                    "Date of birth matches after normalization to YYYY-MM-DD."
-                    if passed
-                    else "Date of birth does not match after normalization to YYYY-MM-DD."
-                ),
-            )
-        )
+    # 6. Result status present
+    results.append(FieldValidation(
+        field="result_status",
+        expected="PASS or FAIL",
+        extracted=extracted.result_status,
+        result="pass" if extracted.result_status else "missing",
+        reason=f"Result status: {extracted.result_status}." if extracted.result_status
+               else "Result status (PASS/FAIL) not found in document.",
+    ))
 
-    if application.board is not None:
-        results.append(_compare_exact("board", application.board, extracted.board, "Board"))
+    # 7. Issuing board present
+    results.append(FieldValidation(
+        field="issuing_board",
+        expected="present",
+        extracted=extracted.issuing_board,
+        result="pass" if extracted.issuing_board else "missing",
+        reason=f"Issuing board identified as: {extracted.issuing_board}." if extracted.issuing_board
+               else "Issuing board/authority not found in document.",
+    ))
 
-    if extracted.year is None:
-        results.append(_missing("year", application.year))
-    else:
-        passed = extracted.year == application.year
-        results.append(
-            FieldValidation(
-                field="year",
-                expected=application.year,
-                extracted=extracted.year,
-                result="pass" if passed else "mismatch",
-                reason=f"Year {'is' if passed else 'is not'} an exact integer match.",
-            )
-        )
-
-    if application.total is not None:
-        if extracted.total is None:
-            results.append(_missing("total", application.total))
-        else:
-            in_range = 0 <= extracted.total <= 500
-            passed = in_range and extracted.total == application.total
-            reason = (
-                "Total must be an integer between 0 and 500."
-                if not in_range
-                else "Total is an exact integer match within the valid range."
-                if passed
-                else "Total does not match the application form."
-            )
-            results.append(
-                FieldValidation(
-                    field="total",
-                    expected=application.total,
-                    extracted=extracted.total,
-                    result="pass" if passed else "mismatch",
-                    reason=reason,
-                )
-            )
     return results
 
 
-def decide(validations: Sequence[FieldValidation]) -> Decision:
-    if any(item.result == "missing" for item in validations):
-        return "missing"
-    if any(item.result == "mismatch" for item in validations):
-        return "needs_review"
-    return "verified"
+def decide(extracted: ExtractedDocument, validations: list[FieldValidation]) -> Decision:
+    """
+    Three-verdict decision combining Gemini's verdict with internal consistency checks.
+    Gemini's verdict is primary; internal checks can escalate but not override downward.
+    """
+    gemini = extracted.gemini_verdict  # verified / needs_review / suspicious
+
+    # Count internal check results
+    passed = sum(1 for v in validations if v.result == "pass")
+    total = len(validations)
+    pass_rate = passed / total if total else 0.0
+
+    # Escalate to suspicious if Gemini flags it OR if AI score very high OR consistency very low
+    if (
+        gemini == "suspicious"
+        or extracted.ai_generation_score >= 0.6
+        or extracted.internal_consistency_score <= 0.3
+        or (pass_rate < 0.4 and total >= 4)
+    ):
+        return "suspicious"
+
+    # Verified: Gemini says so AND internal checks mostly pass AND low AI score
+    if (
+        gemini == "verified"
+        and pass_rate >= 0.7
+        and extracted.ai_generation_score < 0.3
+        and extracted.internal_consistency_score >= 0.7
+    ):
+        return "verified"
+
+    return "needs_review"

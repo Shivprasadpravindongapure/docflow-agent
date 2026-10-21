@@ -5,69 +5,102 @@ import { createApplication, uploadDocument } from '../api/client';
 const ACCEPTED_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
 const MAX_SIZE = 2 * 1024 * 1024;
 
+const DOC_TYPES = [
+  { value: 'marksheet', label: 'Marksheet' },
+  { value: 'caste_certificate', label: 'Caste / Category Certificate' },
+  { value: 'ews_certificate', label: 'EWS Certificate' },
+  { value: 'fee_receipt', label: 'Fee Receipt' },
+  { value: 'nationality_certificate', label: 'Nationality Certificate' },
+  { value: 'domicile_certificate', label: 'Domicile Certificate' },
+  { value: 'income_certificate', label: 'Income Certificate' },
+  { value: 'other', label: 'Other' },
+];
+
+interface SelectedFile {
+  file: File;
+  docType: string;
+  id: number;
+}
+
 interface NewApplicationProps {
   token: string;
 }
+
+let nextFileId = 1;
 
 export default function NewApplication({ token }: NewApplicationProps) {
   const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [form, setForm] = useState({
-    name: '', roll_number: '', dob: '', year: new Date().getFullYear(), board: '', total: 0,
-  });
-  const [docType, setDocType] = useState('marksheet');
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<SelectedFile[]>([]);
+  const [currentDocType, setCurrentDocType] = useState('marksheet');
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [step, setStep] = useState<'form' | 'upload' | 'done'>('form');
-  const [applicationId, setApplicationId] = useState('');
   const [uploadProgress, setUploadProgress] = useState('');
-
-  function update(field: string, value: string | number) {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  }
+  const [step, setStep] = useState<'upload' | 'done'>('upload');
+  const [applicationId, setApplicationId] = useState('');
 
   function validateFile(f: File): string | null {
-    if (!ACCEPTED_TYPES.includes(f.type)) return 'Only PDF, PNG, and JPEG files are supported.';
-    if (f.size > MAX_SIZE) return 'File must be smaller than 2 MB.';
-    if (f.size === 0) return 'File is empty.';
+    if (!ACCEPTED_TYPES.includes(f.type)) return `"${f.name}" — Only PDF, PNG, and JPEG files are supported.`;
+    if (f.size > MAX_SIZE) return `"${f.name}" — File must be smaller than 2 MB.`;
+    if (f.size === 0) return `"${f.name}" — File is empty.`;
     return null;
   }
 
-  function handleFile(f: File) {
-    const err = validateFile(f);
-    if (err) { setError(err); return; }
-    setFile(f);
-    setError('');
+  function addFiles(newFiles: FileList | File[]) {
+    const errs: string[] = [];
+    const valid: SelectedFile[] = [];
+    for (const f of Array.from(newFiles)) {
+      const err = validateFile(f);
+      if (err) {
+        errs.push(err);
+      } else {
+        valid.push({ file: f, docType: currentDocType, id: nextFileId++ });
+      }
+    }
+    if (valid.length) {
+      setFiles((prev) => [...prev, ...valid]);
+    }
+    setError(errs.length ? errs.join('\n') : '');
+  }
+
+  function removeFile(id: number) {
+    setFiles((prev) => prev.filter((f) => f.id !== id));
+  }
+
+  function updateDocType(id: number, newType: string) {
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, docType: newType } : f)));
   }
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files[0];
-    if (f) handleFile(f);
-  }, []);
+    if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+  }, [currentDocType]);
 
   async function handleSubmit() {
+    if (!files.length) {
+      setError('Please add at least one document.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
-      setUploadProgress('Creating application…');
+      // Auto-create a minimal application record
+      setUploadProgress('Creating submission…');
       const app = await createApplication(token, {
-        name: form.name,
-        roll_number: form.roll_number,
-        dob: form.dob,
-        year: form.year,
-        board: form.board || undefined,
-        total: form.total || undefined,
+        name: 'Document Upload',
+        roll_number: 'N/A',
+        dob: '2000-01-01',
+        year: new Date().getFullYear(),
       });
       setApplicationId(app.id);
 
-      if (file) {
-        setUploadProgress('Uploading document…');
-        await uploadDocument(token, app.id, file);
+      // Upload each file
+      for (let i = 0; i < files.length; i++) {
+        setUploadProgress(`Uploading document ${i + 1} of ${files.length}…`);
+        await uploadDocument(token, app.id, files[i].file);
       }
 
       setStep('done');
@@ -80,6 +113,7 @@ export default function NewApplication({ token }: NewApplicationProps) {
     }
   }
 
+  // ---------- Success view ----------
   if (step === 'done') {
     return (
       <div className="mx-auto max-w-lg text-center">
@@ -89,9 +123,9 @@ export default function NewApplication({ token }: NewApplicationProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <h2 className="text-xl font-bold text-emerald-900">Application Submitted</h2>
+          <h2 className="text-xl font-bold text-emerald-900">Documents Submitted</h2>
           <p className="mt-2 text-sm text-emerald-700">
-            Your document is being processed. You'll see results shortly.
+            {files.length} document{files.length > 1 ? 's' : ''} uploaded successfully. Processing will begin shortly.
           </p>
           <div className="mt-6 flex justify-center gap-3">
             <button
@@ -112,85 +146,41 @@ export default function NewApplication({ token }: NewApplicationProps) {
     );
   }
 
+  // ---------- Upload view ----------
   return (
     <div className="mx-auto max-w-2xl">
-      <h1 className="text-2xl font-bold tracking-tight text-slate-900">New Application</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-slate-900">Upload Documents</h1>
       <p className="mt-2 text-sm text-slate-600">
-        Fill in the applicant details and upload the document for verification.
+        Select the document type, add your files, and submit.
       </p>
 
       <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-        Use synthetic data only. Do not enter real student information.
+        Use synthetic data only. Do not upload real student documents.
       </div>
 
-      <form
-        className="mt-6 space-y-6"
-        onSubmit={(e) => { e.preventDefault(); void handleSubmit(); }}
-      >
-        {/* Document Type */}
-        <fieldset>
-          <legend className="text-sm font-semibold text-slate-700">Document Type</legend>
-          <div className="mt-2 flex flex-wrap gap-3">
-            {['marksheet', 'academic_certificate', 'income_certificate'].map((t) => (
-              <label
-                key={t}
-                className={`cursor-pointer rounded-lg border px-4 py-2 text-sm font-medium transition ${
-                  docType === t
-                    ? 'border-sky-600 bg-sky-50 text-sky-800'
-                    : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-                } ${t !== 'marksheet' ? 'opacity-50' : ''}`}
-              >
-                <input
-                  type="radio" name="docType" value={t} checked={docType === t}
-                  onChange={() => setDocType(t)} className="sr-only"
-                  disabled={t !== 'marksheet'}
-                />
-                {t === 'marksheet' ? 'Marksheet' : t === 'academic_certificate' ? 'Academic Certificate' : 'Income Certificate'}
-                {t !== 'marksheet' && <span className="ml-1 text-xs">(Coming soon)</span>}
-              </label>
-            ))}
-          </div>
-        </fieldset>
-
-        {/* Form fields */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <label className="block text-sm font-medium text-slate-700">
-            Student Name *
-            <input required value={form.name} onChange={(e) => update('name', e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 outline-none" />
+      <div className="mt-6 space-y-6">
+        {/* Document Type selector */}
+        <div>
+          <label className="block text-sm font-semibold text-slate-700">
+            Document Type
+            <select
+              value={currentDocType}
+              onChange={(e) => setCurrentDocType(e.target.value)}
+              className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+            >
+              {DOC_TYPES.map((dt) => (
+                <option key={dt.value} value={dt.value}>{dt.label}</option>
+              ))}
+            </select>
           </label>
-          <label className="block text-sm font-medium text-slate-700">
-            Roll Number *
-            <input required value={form.roll_number} onChange={(e) => update('roll_number', e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 outline-none" />
-          </label>
-          <label className="block text-sm font-medium text-slate-700">
-            Date of Birth *
-            <input required type="date" value={form.dob} onChange={(e) => update('dob', e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 outline-none" />
-          </label>
-          <label className="block text-sm font-medium text-slate-700">
-            Exam Year *
-            <input required type="number" min={1900} max={2100} value={form.year}
-              onChange={(e) => update('year', Number(e.target.value))}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 outline-none" />
-          </label>
-          <label className="block text-sm font-medium text-slate-700">
-            Board / Institution
-            <input value={form.board} onChange={(e) => update('board', e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 outline-none" />
-          </label>
-          <label className="block text-sm font-medium text-slate-700">
-            Total Marks
-            <input type="number" min={0} max={500} value={form.total}
-              onChange={(e) => update('total', Number(e.target.value))}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 outline-none" />
-          </label>
+          <p className="mt-1 text-xs text-slate-500">
+            Choose the type before adding files. You can change it per file below.
+          </p>
         </div>
 
-        {/* Upload area */}
+        {/* Drop zone */}
         <div>
-          <p className="text-sm font-semibold text-slate-700">Upload Document *</p>
+          <p className="text-sm font-semibold text-slate-700">Add Files</p>
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
@@ -204,28 +194,90 @@ export default function NewApplication({ token }: NewApplicationProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
-            {file ? (
-              <p className="text-sm font-medium text-slate-700">{file.name} ({(file.size / 1024).toFixed(0)} KB)</p>
-            ) : (
-              <>
-                <p className="text-sm font-medium text-slate-600">Drag & drop or click to browse</p>
-                <p className="mt-1 text-xs text-slate-400">PDF, PNG, or JPEG — Max 2 MB</p>
-              </>
-            )}
+            <p className="text-sm font-medium text-slate-600">Drag & drop or click to browse</p>
+            <p className="mt-1 text-xs text-slate-400">PDF, PNG, or JPEG — Max 2 MB per file — Multiple files allowed</p>
           </div>
-          <input ref={fileRef} type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+          <input
+            ref={fileRef}
+            type="file"
+            className="hidden"
+            accept=".pdf,.png,.jpg,.jpeg"
+            multiple
+            onChange={(e) => { if (e.target.files?.length) addFiles(e.target.files); e.target.value = ''; }}
+          />
         </div>
 
-        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+        {/* File list */}
+        {files.length > 0 && (
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-2">
+              Selected Files ({files.length})
+            </p>
+            <div className="space-y-2">
+              {files.map((sf) => (
+                <div
+                  key={sf.id}
+                  className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3"
+                >
+                  {/* File icon */}
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-sky-50">
+                    {sf.file.type === 'application/pdf' ? (
+                      <svg className="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                      </svg>
+                    ) : (
+                      <svg className="h-5 w-5 text-emerald-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </div>
+
+                  {/* File info */}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-700">{sf.file.name}</p>
+                    <p className="text-xs text-slate-400">{(sf.file.size / 1024).toFixed(0)} KB</p>
+                  </div>
+
+                  {/* Doc type per file */}
+                  <select
+                    value={sf.docType}
+                    onChange={(e) => updateDocType(sf.id, e.target.value)}
+                    className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 outline-none focus:border-sky-500"
+                  >
+                    {DOC_TYPES.map((dt) => (
+                      <option key={dt.value} value={dt.value}>{dt.label}</option>
+                    ))}
+                  </select>
+
+                  {/* Remove button */}
+                  <button
+                    type="button"
+                    onClick={() => removeFile(sf.id)}
+                    className="flex-shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+                    title="Remove file"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {error && <p role="alert" className="whitespace-pre-line text-sm text-red-600">{error}</p>}
         {uploadProgress && <p className="text-sm text-sky-700">{uploadProgress}</p>}
 
+        {/* Actions */}
         <div className="flex gap-3 pt-2">
           <button
-            type="submit" disabled={busy || !file}
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={busy || !files.length}
             className="rounded-lg bg-sky-700 px-6 py-2.5 font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy ? 'Submitting…' : 'Submit Application'}
+            {busy ? 'Submitting…' : `Submit ${files.length ? `(${files.length} file${files.length > 1 ? 's' : ''})` : ''}`}
           </button>
           <button
             type="button" onClick={() => navigate('/dashboard')}
@@ -234,7 +286,7 @@ export default function NewApplication({ token }: NewApplicationProps) {
             Cancel
           </button>
         </div>
-      </form>
+      </div>
     </div>
   );
 }

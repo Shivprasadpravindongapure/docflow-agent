@@ -60,9 +60,11 @@ export function createApp(pool = createPool()) {
   app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'api' }));
   app.post('/auth/register', route(async (req, res) => {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const password = req.body?.password;
+    if (!name || name.length > 200) return res.status(400).json({ error: 'Provide a name (1–200 characters).' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof password !== 'string' || password.length < 12 || password.length > 200) return res.status(400).json({ error: 'Provide a valid email and a password of 12–200 characters.' });
-    try { const created = await pool.query('INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3) RETURNING id,email', [id(),email,passwordHash(password)]); return res.status(201).json(created.rows[0]); }
+    try { const created = await pool.query('INSERT INTO users(id,email,name,password_hash) VALUES($1,$2,$3,$4) RETURNING id,email,name', [id(),email,name,passwordHash(password)]); return res.status(201).json(created.rows[0]); }
     catch (error) { if ((error as {code?:string}).code === '23505') return res.status(409).json({ error: 'Account already exists.' }); throw error; }
   }));
   app.post('/auth/login', route(async (req, res) => {
@@ -205,12 +207,21 @@ export function createApp(pool = createPool()) {
     const decision = (job.result_json?.decision as string) || 'verified';
     const timings = job.result_json?.timings ?? job.result_json?.timings_ms ?? null;
 
+    const reasoning = job.result_json?.reasoning ?? null;
+    const quality = job.result_json?.quality ?? null;
+    const ocr_text = job.result_json?.ocr_text ?? null;
+    const extracted_document = job.result_json?.extracted_document ?? null;
+
     return res.json({
       status: 'completed',
       decision,
       match_score,
       validations,
       timings,
+      reasoning,
+      quality,
+      ocr_text,
+      extracted_document,
       created_at: job.created_at,
       updated_at: job.updated_at,
     });

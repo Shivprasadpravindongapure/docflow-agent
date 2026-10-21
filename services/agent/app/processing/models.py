@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 
+# ── Application form (from Express API) ──────────────────────────────────────
+
 class ApplicationForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -19,10 +21,108 @@ class ApplicationForm(BaseModel):
     def strip_required_strings(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
+    def is_placeholder(self) -> bool:
+        """True when the upload page auto-generated dummy form data."""
+        return self.name.lower() in ("document upload", "n/a", "") or self.roll_number in ("N/A", "n/a", "")
+
+
+# ── Rich extraction from Gemini Vision ───────────────────────────────────────
+
+class SubjectRow(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    subject: str
+    marks_obtained: int | None = None
+    max_marks: int | None = None
+    grade: str | None = None
+
+
+class ExtractedDocument(BaseModel):
+    """All fields extracted from the document by Gemini Vision."""
+    model_config = ConfigDict(extra="ignore")
+
+    # Document identity
+    document_type: str | None = None       # "SSC Marksheet", "HSC Certificate"
+    issuing_board: str | None = None       # "Maharashtra State Board..."
+    school_name: str | None = None
+
+    # Student info
+    student_name: str | None = None
+    roll_number: str | None = None
+    seat_number: str | None = None
+    date_of_birth: str | None = None
+    mother_name: str | None = None
+
+    # Exam info
+    exam_year: str | None = None
+    exam_month: str | None = None
+
+    # Marks table
+    subjects: list[SubjectRow] = Field(default_factory=list)
+    total_marks_obtained: int | None = None
+    total_max_marks: int | None = None
+    percentage: float | None = None
+    result_status: str | None = None   # "PASS" / "FAIL"
+    grade: str | None = None
+    division: str | None = None        # "First", "Second", "Third"
+
+    # Gemini's own analysis
+    internal_consistency_score: float = 0.5   # 0–1 (1 = perfectly consistent)
+    consistency_issues: list[str] = Field(default_factory=list)
+    ai_generation_score: float = 0.0          # 0–1 (1 = clearly AI-generated)
+    suspicion_signals: list[str] = Field(default_factory=list)   # red flags
+    authenticity_signals: list[str] = Field(default_factory=list)  # good signs
+
+    gemini_verdict: Literal["verified", "needs_review", "suspicious"] = "needs_review"
+    gemini_reasoning: str = ""
+
+    extraction_method: str = "gemini"
+    warnings: list[str] = Field(default_factory=list)
+
+
+# ── Field-level validation (internal consistency) ────────────────────────────
+
+class FieldValidation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: str
+    expected: str | int | float | None
+    extracted: str | int | float | None
+    result: Literal["pass", "mismatch", "missing"]
+    reason: str = Field(min_length=1)
+
+
+# ── Quality flags (image quality pre-check) ──────────────────────────────────
+
+class QualityFlags(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_blurry: bool = False
+    is_too_dark: bool = False
+    is_too_small: bool = False
+    blur_score: float | None = None
+    mean_brightness: float | None = None
+
+
+# ── Agent reasoning (plain-language explanation) ─────────────────────────────
+
+class AgentReasoning(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str
+    why_decision: str
+    flags: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+
+
+# ── Final decision ────────────────────────────────────────────────────────────
+
+Decision = Literal["verified", "needs_review", "suspicious"]
+
+
+# ── Legacy (kept for worker compat) ──────────────────────────────────────────
 
 class ExtractionValues(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     name: str | None
     roll_number: str | None
     dob: str | None
@@ -34,19 +134,6 @@ class ExtractionValues(BaseModel):
 
 class ExtractedFields(ExtractionValues):
     warnings: list[str] = Field(default_factory=list)
-
-
-class FieldValidation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    field: Literal["name", "roll_number", "dob", "board", "year", "total"]
-    expected: str | int | None
-    extracted: str | int | None
-    result: Literal["pass", "mismatch", "missing"]
-    reason: str = Field(min_length=1)
-
-
-Decision = Literal["verified", "needs_review", "missing"]
 
 
 def normalize_date(value: str) -> str | None:

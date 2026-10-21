@@ -17,11 +17,66 @@ export interface ValidationFlag {
   reason: string;
 }
 
+export interface SubjectRow {
+  subject: string;
+  marks_obtained: number | null;
+  max_marks: number | null;
+  grade: string | null;
+}
+
+export interface ExtractedDocument {
+  document_type: string | null;
+  issuing_board: string | null;
+  school_name: string | null;
+  student_name: string | null;
+  roll_number: string | null;
+  seat_number: string | null;
+  date_of_birth: string | null;
+  mother_name: string | null;
+  exam_year: string | null;
+  exam_month: string | null;
+  subjects: SubjectRow[];
+  total_marks_obtained: number | null;
+  total_max_marks: number | null;
+  percentage: number | null;
+  result_status: string | null;
+  grade: string | null;
+  division: string | null;
+  internal_consistency_score: number;
+  consistency_issues: string[];
+  ai_generation_score: number;
+  suspicion_signals: string[];
+  authenticity_signals: string[];
+  gemini_verdict: string;
+  gemini_reasoning: string;
+  extraction_method: string;
+  warnings: string[];
+}
+
+export interface AgentReasoning {
+  summary: string;
+  why_decision: string;
+  flags: string[];
+  confidence_score: number;
+}
+
+export interface QualityFlags {
+  is_blurry: boolean;
+  is_too_dark: boolean;
+  is_too_small: boolean;
+  blur_score: number | null;
+  mean_brightness: number | null;
+}
+
 export interface VerificationResult {
   status: string;
   decision?: string;
   match_score?: number;
   validations?: ValidationFlag[];
+  reasoning?: AgentReasoning;
+  quality?: QualityFlags;
+  ocr_text?: string;
+  extracted_document?: ExtractedDocument;
   created_at?: string;
   updated_at?: string;
 }
@@ -86,11 +141,11 @@ function authHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-export async function register(email: string, password: string): Promise<void> {
+export async function register(name: string, email: string, password: string): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ name, email, password }),
   });
   if (!response.ok) throw new Error(await readError(response));
 }

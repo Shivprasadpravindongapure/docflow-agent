@@ -60,7 +60,7 @@ export default function Dashboard({ token }: DashboardProps) {
           to="/applications/new"
           className="rounded-lg bg-sky-700 px-5 py-2.5 font-semibold text-white hover:bg-sky-800"
         >
-          + New Application
+          + Upload Documents
         </Link>
       </div>
 
@@ -97,7 +97,7 @@ export default function Dashboard({ token }: DashboardProps) {
             to="/applications/new"
             className="mt-4 inline-block rounded-lg bg-sky-700 px-5 py-2.5 font-semibold text-white hover:bg-sky-800"
           >
-            + New Application
+            + Upload Documents
           </Link>
         </div>
       )}
