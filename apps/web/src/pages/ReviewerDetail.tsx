@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { getReviewerAppDetail, submitReview, type ReviewerAppDetail } from '../api/client';
+import { getReviewerAppDetail, startCaseAgentRun, submitReview, type ReviewerAppDetail } from '../api/client';
 
 const resultColors: Record<string, string> = {
   pass: 'text-emerald-700 bg-emerald-50',
@@ -22,6 +22,8 @@ export default function ReviewerDetail({ token }: ReviewerDetailProps) {
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [agentQuestion, setAgentQuestion] = useState('Summarize the completed checks and any applicable policy evidence.');
+  const [agentBusy, setAgentBusy] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -43,6 +45,20 @@ export default function ReviewerDetail({ token }: ReviewerDetailProps) {
       setError(e instanceof Error ? e.message : 'Failed to submit review');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleAgentRun() {
+    if (!id || !agentQuestion.trim()) return;
+    setAgentBusy(true);
+    setError('');
+    try {
+      await startCaseAgentRun(token, id, agentQuestion.trim());
+      setDetail(await getReviewerAppDetail(token, id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Assistant run failed');
+    } finally {
+      setAgentBusy(false);
     }
   }
 
@@ -85,7 +101,55 @@ export default function ReviewerDetail({ token }: ReviewerDetailProps) {
       </div>
 
       {/* Validations */}
-      {detail.validations.length > 0 && (
+      {detail.documents.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-white p-6">
+          <h2 className="text-lg font-bold text-slate-900">Document-by-document results</h2>
+          <div className="mt-4 space-y-4">
+            {detail.documents.map((document) => {
+              const result = document.result;
+              const payload = result?.typed_payload;
+              return (
+                <article key={document.document_id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-semibold text-slate-800">{document.metadata.filename} · {document.metadata.document_type}</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {document.metadata.processing_state} · {document.metadata.page_count ?? '—'} page(s) · {document.metadata.content_type}
+                      </p>
+                    </div>
+                    {result?.decision && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">{result.decision.replace('_', ' ')}</span>}
+                  </div>
+                  {result && (result.document_type_status === 'unsupported' || result.document_type_status === 'uncertain') && (
+                    <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      {result.reasoning?.summary ?? 'Type-specific checks were not run. Review the OCR/page evidence and classify this document.'}
+                    </p>
+                  )}
+                  {payload && (
+                    <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {Object.entries(payload).filter(([key, value]) => !['document_type', 'schema_version', 'warnings'].includes(key) && value != null && value !== '').map(([key, value]) => (
+                        <div key={key} className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                          <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{key.replaceAll('_', ' ')}</dt>
+                          <dd className="mt-1 break-words text-sm text-slate-800">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd>
+                          {result?.field_provenance?.[key] && <dd className="mt-1 text-[10px] text-slate-400">Evidence: {result.field_provenance[key].join(', ') || 'No matching OCR text reference'}</dd>}
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                  {result && (
+                    <details className="mt-3 rounded-md border border-slate-200 bg-white p-3">
+                      <summary className="cursor-pointer text-xs font-semibold text-sky-800">OCR and page evidence</summary>
+                      <ul className="mt-2 flex flex-wrap gap-2">{document.evidence_refs.map((ref) => <li key={ref.reference_id} className="rounded bg-slate-100 px-2 py-1 text-[11px] text-slate-600">{ref.reference_id}</li>)}</ul>
+                      <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-600">{result.ocr_text || 'No OCR text was available.'}</pre>
+                    </details>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {detail.documents.length <= 1 && detail.validations.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-6">
           <h2 className="text-lg font-bold text-slate-900">Field Validations</h2>
           <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
@@ -118,6 +182,55 @@ export default function ReviewerDetail({ token }: ReviewerDetailProps) {
           </div>
         </div>
       )}
+
+      <section className="rounded-xl border border-violet-200 bg-white p-6">
+        <h2 className="text-lg font-bold text-slate-900">Case assistant</h2>
+        <p className="mt-1 text-sm text-slate-600">The assistant organizes completed checks and policy evidence. It does not make the review decision.</p>
+        <label className="mt-4 block text-sm font-medium text-slate-700">
+          Question
+          <textarea value={agentQuestion} onChange={(e) => setAgentQuestion(e.target.value)} rows={2} maxLength={1000}
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </label>
+        <button onClick={() => void handleAgentRun()} disabled={agentBusy || !agentQuestion.trim()}
+          className="mt-3 rounded-lg bg-violet-700 px-5 py-2.5 font-semibold text-white disabled:opacity-50">
+          {agentBusy ? 'Running checks…' : 'Run case assistant'}
+        </button>
+        {detail.agent_runs.length === 0 ? <p className="mt-4 text-sm text-slate-500">No assistant runs yet. All documents must finish processing before a run.</p> : (
+          <div className="mt-5 space-y-4">
+            {detail.agent_runs.map((run) => (
+              <article key={run.id} className="rounded-lg border border-slate-200 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-semibold text-slate-800">Assistant run · {run.status.replace('_', ' ')}</h3>
+                  <time className="text-xs text-slate-400">{new Date(run.created_at).toLocaleString()}</time>
+                </div>
+                <p className="mt-1 text-sm text-slate-500">{run.question}</p>
+                <p className="mt-3 text-sm text-slate-700">{run.summary}</p>
+                {run.reason && <p className="mt-1 text-sm text-amber-700">Review reason: {run.reason}</p>}
+                {run.policy_answers_json.length === 0 && <p className="mt-3 text-xs text-slate-500">No policy evidence was retrieved for this run.</p>}
+                {run.policy_answers_json.map((answer, index) => (
+                  <div key={`${run.id}-policy-${index}`} className="mt-3 rounded-md bg-violet-50 p-3 text-sm">
+                    <p className="font-medium text-violet-900">Policy evidence · {answer.status}</p>
+                    {answer.answer && <p className="mt-1 text-slate-700">{answer.answer}</p>}
+                    {answer.citations.map((citation) => (
+                      <blockquote key={citation.citation_id} className="mt-2 border-l-2 border-violet-300 pl-3 text-slate-600">
+                        <p className="font-medium">{citation.title} · version {citation.version}{citation.section ? ` · ${citation.section}` : ''}</p>
+                        <p className="mt-1">{citation.excerpt}</p>
+                        <p className="mt-1 text-xs text-slate-400">Source {citation.source_id}</p>
+                      </blockquote>
+                    ))}
+                  </div>
+                ))}
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-sm font-medium text-slate-700">Tool timeline ({run.traces.length})</summary>
+                  <ol className="mt-2 space-y-1 text-xs text-slate-600">
+                    {run.traces.map((trace) => <li key={`${run.id}-${trace.ordinal}`}>{trace.tool} · {trace.outcome} · {trace.duration_ms} ms{trace.document_id ? ` · document ${trace.document_id.slice(0, 8)}` : ''}{trace.error_code ? ` · ${trace.error_code}` : ''}</li>)}
+                  </ol>
+                </details>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Previous reviews */}
       {detail.reviews.length > 0 && (

@@ -8,7 +8,7 @@ import pytest
 from psycopg.types.json import Jsonb
 
 from services.agent.app.db import connect, database_url
-from services.agent.app.processing.models import ExtractedFields, FieldValidation
+from services.agent.app.processing.models import AgentReasoning, ExtractedDocument, ExtractedFields, FieldValidation, QualityFlags
 from services.agent.app.processing.pipeline import ProcessingResult
 from services.agent.app.worker import claim_job, process_job
 
@@ -47,7 +47,7 @@ def cleanup(db,user):
 
 def result(decision="needs_review"):
     flag = FieldValidation(field="total",expected=450,extracted=449,result="mismatch",reason="Synthetic fixture mismatch.")
-    return ProcessingResult(input_type="pdf",ocr_text="synthetic marksheet",extracted=ExtractedFields(name="Asha Example",roll_number="SYN-1",dob="2008-01-02",board=None,year=2025,total=449,result=None),validations=[flag],decision=decision,timings_ms={"document":1,"ocr":0,"extraction":1,"validation":1,"total":3})
+    return ProcessingResult(input_type="pdf",document_type="marksheet",document_type_status="supported",page_count=1,evidence_refs=[],ocr_text="synthetic marksheet",extracted=ExtractedFields(name="Asha Example",roll_number="SYN-1",dob="2008-01-02",board=None,year=2025,total=449,result=None),extracted_document=ExtractedDocument(extraction_method="regex"),validations=[flag],decision=decision,quality=QualityFlags(),reasoning=AgentReasoning(summary="Synthetic review",why_decision="Synthetic mismatch",confidence_score=None),timings_ms={"document":1,"ocr":0,"extraction":1,"validation":1,"total":3})
 
 
 def test_claim_is_atomic_across_workers(tmp_path,pg_schema):
@@ -73,6 +73,34 @@ def test_success_persists_decision_validation_evidence_and_audit(tmp_path,pg_sch
         assert validation["field"]=="total" and validation["expected"]==450 and validation["extracted"]==449 and validation["result"]=="mismatch" and validation["reason"]
         event=db.execute("SELECT event,details_json FROM audit_events WHERE job_id=%s AND event='job.completed'",(job_id,)).fetchone()
         assert event["event"]=="job.completed" and event["details_json"]["decision"]=="needs_review"
+    finally:
+        cleanup(db,user)
+
+
+def test_case_status_waits_for_every_document_and_aggregates_review_needed(tmp_path,pg_schema):
+    db,user,first_job_id,app_id,first_doc_id=seeded(tmp_path,pg_schema)
+    second_doc_id,second_job_id=uuid.uuid4().hex,uuid.uuid4().hex
+    second_pdf=tmp_path/f"{second_doc_id}.pdf"
+    second_pdf.write_bytes(b"%PDF-synthetic second document")
+    try:
+        db.execute(
+            "INSERT INTO documents(id,application_id,filename,content_type,sha256,storage_path,document_type) VALUES(%s,%s,%s,%s,%s,%s,%s)",
+            (second_doc_id,app_id,"synthetic-second.pdf","application/pdf","synthetic-sha-2",str(second_pdf),"birth_certificate"),
+        )
+        db.execute("INSERT INTO jobs(id,document_id,status,available_at) VALUES(%s,%s,'queued',now())",(second_job_id,second_doc_id))
+        db.commit()
+
+        first_job=claim_job(db,first_job_id)
+        process_job(db,first_job,lambda *_args,**_kwargs:result("verified"))
+        assert db.execute("SELECT status FROM applications WHERE id=%s",(app_id,)).fetchone()["status"]=="processing"
+
+        second_job=claim_job(db,second_job_id)
+        process_job(db,second_job,lambda *_args,**_kwargs:result("needs_review"))
+        assert db.execute("SELECT status FROM applications WHERE id=%s",(app_id,)).fetchone()["status"]=="needs_review"
+        first_result=db.execute("SELECT result_json FROM jobs WHERE id=%s",(first_job_id,)).fetchone()["result_json"]
+        second_result=db.execute("SELECT result_json FROM jobs WHERE id=%s",(second_job_id,)).fetchone()["result_json"]
+        assert first_result["document_id"]==first_doc_id and first_result["decision"]=="verified"
+        assert second_result["document_id"]==second_doc_id and second_result["decision"]=="needs_review"
     finally:
         cleanup(db,user)
 
@@ -108,11 +136,16 @@ def test_failures_retry_boundedly_then_become_terminal(tmp_path,pg_schema):
         for attempt in range(1,4):
             job=claim_job(db)
             assert job["attempts"]==attempt
-            assert process_job(db,job,lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("synthetic processing failure"))) is None
+            assert process_job(db,job,lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("private synthetic payload must not be logged"))) is None
             assert db.execute("SELECT status FROM jobs WHERE id=%s",(job_id,)).fetchone()["status"]==("failed" if attempt==3 else "retry")
             if attempt<3:
                 db.execute("UPDATE jobs SET available_at=now() WHERE id=%s",(job_id,))
         assert db.execute("SELECT count(*) AS total FROM audit_events WHERE job_id=%s AND event='job.failed'",(job_id,)).fetchone()["total"]==1
         assert db.execute("SELECT count(*) AS total FROM audit_events WHERE job_id=%s AND event='job.retry_scheduled'",(job_id,)).fetchone()["total"]==2
+        stored_error=db.execute("SELECT error FROM jobs WHERE id=%s",(job_id,)).fetchone()["error"]
+        audit_details=db.execute("SELECT details_json FROM audit_events WHERE job_id=%s AND event='job.failed' LIMIT 1",(job_id,)).fetchone()["details_json"]
+        assert stored_error == "RuntimeError"
+        assert audit_details["error_code"] == "RuntimeError"
+        assert "private synthetic payload" not in str(audit_details)
     finally:
         cleanup(db,user)

@@ -1,4 +1,4 @@
-from services.agent.app.processing.models import ApplicationForm, ExtractedFields, FieldValidation
+from services.agent.app.processing.models import ApplicationForm, ExtractedDocument, ExtractedFields, FieldValidation
 from services.agent.app.processing.validate import decide, validate
 
 
@@ -70,7 +70,7 @@ def test_total_is_not_required_when_application_does_not_supply_it():
     assert "total" not in [item.field for item in results]
 
 
-def test_decision_prioritizes_missing_then_mismatch():
+def test_decision_is_deterministic_and_mismatch_routes_to_review():
     mismatch = FieldValidation(
         field="year",
         expected=2024,
@@ -86,6 +86,19 @@ def test_decision_prioritizes_missing_then_mismatch():
         reason="DOB missing.",
     )
 
-    assert decide([]) == "verified"
+    assert decide([]) == "missing"
     assert decide([mismatch]) == "needs_review"
-    assert decide([mismatch, missing]) == "missing"
+    assert decide([mismatch, missing]) == "needs_review"
+    assert decide([missing]) == "missing"
+
+
+def test_legacy_model_scores_do_not_change_deterministic_decision():
+    legacy_model_output = ExtractedDocument(
+        internal_consistency_score=0.0,
+        ai_generation_score=1.0,
+        gemini_verdict="needs_review",
+    )
+    passing = FieldValidation(
+        field="year", expected=2024, extracted=2024, result="pass", reason="Years match.",
+    )
+    assert decide(legacy_model_output, [passing]) == "verified"

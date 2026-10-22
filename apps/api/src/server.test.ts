@@ -32,14 +32,14 @@ describe('PostgreSQL API and synthetic upload flow', () => {
     const health = await request(app).get('/health');
     expect(health.body).toEqual({status:'ok',service:'api'});
     const password='synthetic-passphrase-2027';
-    const registered=await request(app).post('/auth/register').send({email,password});
+    const registered=await request(app).post('/auth/register').send({name:'Synthetic Example',email,password});
     expect(registered.status).toBe(201);
     const login=await request(app).post('/auth/login').send({email,password});
     expect(login.status).toBe(200);
     const authorization=`Bearer ${login.body.token}`;
     const created=await request(app).post('/applications').set('Authorization',authorization).send({name:'Asha Example',roll_number:'SYN-2027-001',dob:'2008-01-02',year:2025,board:'Synthetic Board',total:450});
     expect(created.status).toBe(201);
-    const upload=await request(app).post(`/applications/${created.body.id}/documents`).set('Authorization',authorization).set('Content-Type','image/png').send(Buffer.from([137,80,78,71,13,10,26,10,1,2,3]));
+    const upload=await request(app).post(`/applications/${created.body.id}/documents`).set('Authorization',authorization).set('Content-Type','image/png').set('X-Document-Type','marksheet').send(Buffer.from([137,80,78,71,13,10,26,10,1,2,3]));
     expect(upload.status, JSON.stringify(upload.body)).toBe(202);
     const stored=await pool.query('SELECT j.status,d.content_type FROM jobs j JOIN documents d ON d.id=j.document_id WHERE j.id=$1',[upload.body.job_id]);
     expect(stored.rows).toEqual([{status:'queued',content_type:'image/png'}]);
@@ -63,7 +63,7 @@ describe('PostgreSQL API and synthetic upload flow', () => {
   it('streams only the owning applicant status changes and stops polling on disconnect', async () => {
     const statusEmail = `status-${suffix}@example.test`;
     const password = 'synthetic-status-passphrase-2027';
-    await request(app).post('/auth/register').send({ email: statusEmail, password }).expect(201);
+    await request(app).post('/auth/register').send({ name: 'Synthetic Status Example', email: statusEmail, password }).expect(201);
     const login = await request(app).post('/auth/login').send({ email: statusEmail, password }).expect(200);
     const authorization = `Bearer ${login.body.token}`;
     const created = await request(app)
@@ -82,6 +82,7 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       .post(`/applications/${created.body.id}/documents`)
       .set('Authorization', authorization)
       .set('Content-Type', 'image/png')
+      .set('X-Document-Type', 'marksheet')
       .send(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]))
       .expect(202);
 
@@ -89,7 +90,7 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       .get(`/applications/${created.body.id}/status/events`)
       .expect(401);
     const otherEmail = `other-${suffix}@example.test`;
-    await request(app).post('/auth/register').send({ email: otherEmail, password }).expect(201);
+    await request(app).post('/auth/register').send({ name: 'Synthetic Other Example', email: otherEmail, password }).expect(201);
     const otherLogin = await request(app).post('/auth/login').send({ email: otherEmail, password });
     await request(app)
       .get(`/applications/${created.body.id}/status/events`)
@@ -143,12 +144,14 @@ describe('PostgreSQL API and synthetic upload flow', () => {
         "UPDATE jobs SET status='processing',updated_at=now() WHERE id=$1",
         [upload.body.job_id],
       );
+      await pool.query("UPDATE applications SET status='processing' WHERE id=$1", [created.body.id]);
       expect((await nextStatus()).status).toBe('processing');
 
       await pool.query(
         "UPDATE jobs SET status='completed',result_json=$1,updated_at=now() WHERE id=$2",
         [JSON.stringify({ decision: 'verified', document_text: 'must not be sent' }), upload.body.job_id],
       );
+      await pool.query("UPDATE applications SET status='verified' WHERE id=$1", [created.body.id]);
       const verified = await nextStatus();
       expect(verified.status).toBe('verified');
       expect(JSON.stringify(verified)).not.toContain('must not be sent');
@@ -158,7 +161,7 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       await new Promise((resolve) => setTimeout(resolve, 1200));
       const pollCount = () =>
         querySpy.mock.calls.filter(
-          ([query]) => typeof query === 'string' && query.includes('SELECT j.status'),
+          ([query]) => typeof query === 'string' && query.includes('MAX(j.updated_at)'),
         ).length;
       const afterDisconnect = pollCount();
       await new Promise((resolve) => setTimeout(resolve, 1100));
@@ -178,9 +181,10 @@ describe('PostgreSQL API and synthetic upload flow', () => {
     const otherEmail = `unauth-${suffix}@example.test`;
     const password = 'synthetic-passphrase-2027';
 
-    await request(app).post('/auth/register').send({ email: userEmail, password }).expect(201);
-    await request(app).post('/auth/register').send({ email: reviewerEmail, password }).expect(201);
-    await request(app).post('/auth/register').send({ email: otherEmail, password }).expect(201);
+    await request(app).post('/auth/register').send({ name: 'Synthetic Applicant', email: userEmail, password }).expect(201);
+    await request(app).post('/auth/register').send({ name: 'Synthetic Reviewer', email: reviewerEmail, password }).expect(201);
+    await request(app).post('/auth/register').send({ name: 'Synthetic Other', email: otherEmail, password }).expect(201);
+    await pool.query("UPDATE users SET role='reviewer' WHERE email=$1", [reviewerEmail]);
 
     const userLogin = await request(app).post('/auth/login').send({ email: userEmail, password }).expect(200);
     const userAuth = `Bearer ${userLogin.body.token}`;
@@ -210,6 +214,14 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       .post(`/applications/${appId}/documents`)
       .set('Authorization', userAuth)
       .set('Content-Type', 'image/jpeg')
+      .send(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))
+      .expect(400);
+
+    await request(app)
+      .post(`/applications/${appId}/documents`)
+      .set('Authorization', userAuth)
+      .set('Content-Type', 'image/jpeg')
+      .set('X-Document-Type', 'marksheet')
       .send(Buffer.from([0x00, 0x11, 0x22, 0x33]))
       .expect(422);
 
@@ -219,14 +231,15 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       .post(`/applications/${appId}/documents`)
       .set('Authorization', userAuth)
       .set('Content-Type', 'image/jpeg')
+      .set('X-Document-Type', 'identity_card')
       .send(jpegBytes)
       .expect(202);
     const docId = uploadRes.body.document_id;
     const jobId = uploadRes.body.job_id;
 
     // Check document stored with image/jpeg
-    const docRow = await pool.query('SELECT content_type, filename FROM documents WHERE id=$1', [docId]);
-    expect(docRow.rows[0]).toEqual({ content_type: 'image/jpeg', filename: 'upload.jpg' });
+    const docRow = await pool.query('SELECT content_type, filename, document_type FROM documents WHERE id=$1', [docId]);
+    expect(docRow.rows[0]).toEqual({ content_type: 'image/jpeg', filename: 'upload.jpg', document_type: 'identity_card' });
 
     // 4. GET /applications/:applicationId/documents/:documentId/file
     const fileRes = await request(app)
@@ -248,7 +261,13 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       .set('Authorization', userAuth)
       .expect(200);
     expect(docsRes.body).toHaveLength(1);
-    expect(docsRes.body[0]).toMatchObject({ id: docId, filename: 'upload.jpg', content_type: 'image/jpeg' });
+    expect(docsRes.body[0]).toMatchObject({
+      application_id: appId,
+      document_id: docId,
+      metadata: { document_type: 'identity_card', filename: 'upload.jpg', content_type: 'image/jpeg', processing_state: 'queued' },
+      evidence_refs: [],
+      result: null,
+    });
 
     await request(app)
       .get(`/applications/${appId}/documents`)
@@ -273,7 +292,13 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       .get(`/applications/${appId}/result`)
       .set('Authorization', userAuth)
       .expect(200);
-    expect(procResult.body).toEqual({ status: 'processing' });
+    expect(procResult.body).toMatchObject({
+      application_id: appId,
+      document_id: docId,
+      document_type: 'identity_card',
+      metadata: { document_type: 'identity_card', content_type: 'image/jpeg', processing_state: 'queued' },
+      status: 'processing',
+    });
 
     // Simulate worker completing job with validations: 2 pass, 1 mismatch = 66.7% match score
     await pool.query(
@@ -281,6 +306,14 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       [
         JSON.stringify({
           decision: 'needs_review',
+          document_type_status: 'unsupported',
+          page_count: 1,
+          evidence_refs: [{ reference_id: 'page:1:uploaded_page', page_number: 1, source: 'uploaded_page' }],
+          typed_payload: null,
+          field_provenance: {},
+          ocr_text: 'Synthetic identity card evidence.',
+          validations: [],
+          reasoning: { summary: 'Identity card verification is not supported yet.' },
           timings_ms: { ocr: 120, validation: 10, total: 130 },
         }),
         jobId,
@@ -307,6 +340,43 @@ describe('PostgreSQL API and synthetic upload flow', () => {
     expect(completedResult.body.timings).toEqual({ ocr: 120, validation: 10, total: 130 });
     expect(completedResult.body.created_at).toBeDefined();
 
+    const completedDocuments = await request(app)
+      .get(`/applications/${appId}/documents`)
+      .set('Authorization', userAuth)
+      .expect(200);
+    expect(completedDocuments.body[0]).toMatchObject({
+      application_id: appId,
+      document_id: docId,
+      metadata: { document_type: 'identity_card', page_count: 1, processing_state: 'completed' },
+      evidence_refs: [{ reference_id: 'page:1:uploaded_page', page_number: 1, source: 'uploaded_page' }],
+      result: {
+        decision: 'needs_review', document_type_status: 'unsupported', typed_payload: null,
+        validations: [], ocr_text: 'Synthetic identity card evidence.',
+      },
+    });
+
+    process.env.DOCFLOW_INTERNAL_TOKEN = 'synthetic-test-internal-token';
+    const agentFetch = vi.fn(async () => Response.json({
+      status: 'needs_review', application_id: appId, summary: 'Synthetic advisory result.', reason: null,
+      findings: [{ application_id: appId, document_id: docId, document_type: 'marksheet', field: 'dob', expected: '2008-03-15', extracted: '2008-03-16', result: 'mismatch', reason: 'Synthetic mismatch.' }],
+      policy_answers: [{ status: 'abstained', citations: [], answer: null }],
+      trace: [{ tool: 'check_field', document_id: docId, outcome: 'ok', duration_ms: 1, error_code: null, source_refs: [] }],
+    }));
+    vi.stubGlobal('fetch', agentFetch);
+    const agentRun = await request(app).post(`/applications/${appId}/agent-runs`).set('Authorization', userAuth).send({ question: 'Review the submitted synthetic marksheet.' }).expect(201);
+    expect(agentRun.body.status).toBe('needs_review');
+    expect(agentFetch).toHaveBeenCalledOnce();
+    await request(app).post(`/applications/${appId}/agent-runs`).set('Authorization', otherAuth).send({ question: 'Review this case.' }).expect(404);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'private upstream details' }, { status: 503 })));
+    const unavailable = await request(app).post(`/applications/${appId}/agent-runs`).set('Authorization', userAuth).send({ question: 'Retry checks.' }).expect(503);
+    expect(unavailable.body.error).not.toContain('private upstream details');
+    vi.stubGlobal('fetch', vi.fn(async () => { throw Object.assign(new Error('private timeout details'), { name: 'TimeoutError' }); }));
+    const timedOut = await request(app).post(`/applications/${appId}/agent-runs`).set('Authorization', userAuth).send({ question: 'Retry after timeout.' }).expect(503);
+    expect(timedOut.body.error).toContain('timeout');
+    expect(timedOut.body.error).not.toContain('private timeout details');
+    vi.unstubAllGlobals();
+    delete process.env.DOCFLOW_INTERNAL_TOKEN;
+
     // Other user cannot access result
     await request(app)
       .get(`/applications/${appId}/result`)
@@ -314,6 +384,8 @@ describe('PostgreSQL API and synthetic upload flow', () => {
       .expect(404);
 
     // 8. GET /reviewer/queue
+    await request(app).get('/reviewer/queue').set('Authorization', userAuth).expect(403);
+    await request(app).get('/reviewer/queue').set('Authorization', userAuth).expect(403);
     const queueRes = await request(app)
       .get('/reviewer/queue')
       .set('Authorization', reviewerAuth)
@@ -330,9 +402,17 @@ describe('PostgreSQL API and synthetic upload flow', () => {
     expect(reviewerDetail.body.id).toBe(appId);
     expect(reviewerDetail.body.status).toBe('needs_review');
     expect(reviewerDetail.body.documents).toHaveLength(1);
+    expect(reviewerDetail.body.documents[0]).toMatchObject({
+      document_id: docId,
+      metadata: { document_type: 'identity_card', processing_state: 'completed' },
+      result: { document_type_status: 'unsupported', decision: 'needs_review', typed_payload: null },
+    });
     expect(reviewerDetail.body.validations).toHaveLength(3);
     expect(reviewerDetail.body.result.match_score).toBe(66.7);
     expect(reviewerDetail.body.reviews).toHaveLength(0);
+    expect(reviewerDetail.body.agent_runs).toHaveLength(1);
+    expect(reviewerDetail.body.agent_runs[0].findings).toMatchObject([{ document_id: docId, field: 'dob', result: 'mismatch' }]);
+    expect(reviewerDetail.body.agent_runs[0].traces).toMatchObject([{ tool: 'check_field', document_id: docId, outcome: 'ok' }]);
 
     // 10. POST /reviewer/applications/:applicationId/review
     // Rejects empty note

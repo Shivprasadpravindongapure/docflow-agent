@@ -8,12 +8,12 @@ import {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-const TERMINAL = ['completed', 'verified', 'needs_review', 'missing', 'suspicious', 'failed'];
+const TERMINAL = ['completed', 'verified', 'needs_review', 'missing', 'failed'];
 
 const VERDICT = {
-  verified:     { bg: 'bg-emerald-50 border-emerald-300', icon: '✓', iconBg: 'bg-emerald-100 text-emerald-700', title: 'Verified',                         titleColor: 'text-emerald-800' },
+  verified:     { bg: 'bg-emerald-50 border-emerald-300', icon: '✓', iconBg: 'bg-emerald-100 text-emerald-700', title: 'Checks Passed',                    titleColor: 'text-emerald-800' },
   needs_review: { bg: 'bg-amber-50 border-amber-300',     icon: '⚠', iconBg: 'bg-amber-100 text-amber-700',    title: 'Needs Manual Review',                titleColor: 'text-amber-800'   },
-  suspicious:   { bg: 'bg-red-50 border-red-300',         icon: '⛔', iconBg: 'bg-red-100 text-red-700',        title: 'Suspicious — Requires Close Review',  titleColor: 'text-red-800'     },
+  missing:      { bg: 'bg-amber-50 border-amber-300',     icon: '⚠', iconBg: 'bg-amber-100 text-amber-700',    title: 'Evidence Missing',                   titleColor: 'text-amber-800'   },
 };
 
 const VAL_STYLE: Record<string, string> = {
@@ -25,7 +25,6 @@ const VAL_ICON: Record<string, string> = { pass: '✓', mismatch: '✗', missing
 
 const STATUS_PILL: Record<string, string> = {
   verified:     'bg-emerald-100 text-emerald-800',
-  suspicious:   'bg-red-100 text-red-800',
   needs_review: 'bg-amber-100 text-amber-800',
   missing:      'bg-orange-100 text-orange-800',
   failed:       'bg-red-100 text-red-700',
@@ -45,6 +44,11 @@ function Field({ label, value }: { label: string; value: string | number | null 
   );
 }
 
+function displayValue(value: unknown): string {
+  if (value == null) return 'Not found';
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
 // ── Extracted Document Card ───────────────────────────────────────────────────
 
 function ExtractedDocumentCard({ doc }: { doc: ExtractedDocument }) {
@@ -61,19 +65,9 @@ function ExtractedDocumentCard({ doc }: { doc: ExtractedDocument }) {
           <div>
             <h2 className="text-base font-bold text-slate-900">Extracted Document Fields</h2>
             <p className="text-xs text-slate-400">
-              Extracted by Gemini Vision · method: {doc.extraction_method}
+              Extraction method: {doc.extraction_method}
             </p>
           </div>
-        </div>
-        {/* AI generation score badge */}
-        <div className="text-center">
-          <p className={`text-lg font-black ${
-            doc.ai_generation_score >= 0.5 ? 'text-red-600' :
-            doc.ai_generation_score >= 0.3 ? 'text-amber-600' : 'text-emerald-600'
-          }`}>
-            {Math.round(doc.ai_generation_score * 100)}%
-          </p>
-          <p className="text-[10px] text-slate-400 leading-tight">AI-gen<br/>likelihood</p>
         </div>
       </div>
 
@@ -159,32 +153,6 @@ function ExtractedDocumentCard({ doc }: { doc: ExtractedDocument }) {
           </div>
         )}
 
-        {/* Authenticity / Suspicion signals */}
-        {(doc.authenticity_signals?.length > 0 || doc.suspicion_signals?.length > 0) && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {doc.authenticity_signals?.length > 0 && (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-                <p className="text-xs font-semibold text-emerald-700 mb-1.5">✓ Authenticity Signals</p>
-                <ul className="space-y-1">
-                  {doc.authenticity_signals.map((s, i) => (
-                    <li key={i} className="text-xs text-emerald-700">• {s}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {doc.suspicion_signals?.length > 0 && (
-              <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-                <p className="text-xs font-semibold text-red-700 mb-1.5">⚠ Suspicion Signals</p>
-                <ul className="space-y-1">
-                  {doc.suspicion_signals.map((s, i) => (
-                    <li key={i} className="text-xs text-red-700">• {s}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Warnings */}
         {doc.warnings?.length > 0 && (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
@@ -203,15 +171,16 @@ function ExtractedDocumentCard({ doc }: { doc: ExtractedDocument }) {
 
 const STAGES = [
   { key: 'quality',    label: 'Quality Check',        icon: '🔍', desc: 'Blur, brightness, dimensions' },
-  { key: 'ocr',       label: 'Text Extraction',        icon: '📄', desc: 'pdfplumber / selectable text' },
-  { key: 'extraction',label: 'Gemini Vision Analysis', icon: '🤖', desc: 'Fields, marks, AI-gen detection' },
-  { key: 'validation',label: 'Internal Validation',    icon: '✅', desc: 'Consistency cross-checks' },
-  { key: 'reasoning', label: 'Agent Reasoning',        icon: '💡', desc: 'Final verdict + explanation' },
+  { key: 'ocr',       label: 'OCR Evidence',           icon: '📄', desc: 'Selectable text or Tesseract OCR' },
+  { key: 'extraction',label: 'Typed Extraction',        icon: '🗂️', desc: 'Fields for the selected document type' },
+  { key: 'validation',label: 'Configured Checks',       icon: '✅', desc: 'Rules approved for this document type' },
+  { key: 'reasoning', label: 'Review Routing',          icon: '💡', desc: 'Explainable result for a human reviewer' },
 ];
 
 function PipelineCard({ result, processing }: { result: VerificationResult | null; processing: boolean }) {
   const timings: Record<string, number> = (result as any)?.timings ?? {};
   const done = !processing && result?.status === 'completed';
+  const unsupported = result?.document_type_status === 'unsupported' || result?.document_type_status === 'uncertain';
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-6">
@@ -235,21 +204,23 @@ function PipelineCard({ result, processing }: { result: VerificationResult | nul
       <div className="space-y-2">
         {STAGES.map((stage) => {
           const ms = timings[stage.key];
+          const stageWasRun = !unsupported || stage.key === 'quality' || stage.key === 'ocr';
           return (
             <div key={stage.key} className={`flex items-center gap-4 rounded-lg border px-4 py-3 ${
-              done ? 'border-emerald-200 bg-emerald-50' :
+              done && stageWasRun ? 'border-emerald-200 bg-emerald-50' :
+              done && !stageWasRun ? 'border-amber-200 bg-amber-50' :
               processing ? 'border-sky-100 bg-sky-50' : 'border-slate-100 bg-slate-50'
             }`}>
               <span className="text-lg w-7">{stage.icon}</span>
               <div className="flex-1 min-w-0">
-                <p className={`text-sm font-semibold ${done ? 'text-emerald-800' : 'text-slate-600'}`}>
+                <p className={`text-sm font-semibold ${done && !stageWasRun ? 'text-amber-800' : done ? 'text-emerald-800' : 'text-slate-600'}`}>
                   {stage.label}
                 </p>
                 <p className="text-xs text-slate-400">{stage.desc}</p>
               </div>
               {done ? (
                 <div className="text-right">
-                  <span className="text-emerald-600 font-bold text-sm">✓</span>
+                  <span className={`font-bold text-sm ${stageWasRun ? 'text-emerald-600' : 'text-amber-700'}`}>{stageWasRun ? '✓' : 'Not run'}</span>
                   {ms !== undefined && (
                     <p className="text-[10px] text-slate-400">{ms.toFixed(0)}ms</p>
                   )}
@@ -282,64 +253,24 @@ function VerdictCard({ result }: { result: VerificationResult }) {
           {cfg.icon}
         </div>
         <div className="flex-1">
-          <h2 className={`text-xl font-bold ${cfg.titleColor}`}>Agent Verdict: {cfg.title}</h2>
+          <h2 className={`text-xl font-bold ${cfg.titleColor}`}>Automated checks: {cfg.title}</h2>
           {r && <p className="mt-1 text-sm text-slate-600 leading-relaxed">{r.summary}</p>}
         </div>
-        {result.match_score !== undefined && (
+        {result.validations && (
           <div className="text-center flex-shrink-0">
-            <p className={`text-3xl font-black ${cfg.titleColor}`}>{result.match_score}%</p>
-            <p className="text-xs text-slate-400">match</p>
+            <p className={`text-xl font-black ${cfg.titleColor}`}>
+              {result.validations.filter((item) => item.result === 'pass').length}/{result.validations.length}
+            </p>
+            <p className="text-xs text-slate-400">checks passed</p>
           </div>
         )}
       </div>
-
-      {/* Confidence bar */}
-      {r?.confidence_score != null && (
-        <div className="mt-4">
-          <div className="flex justify-between mb-1 text-xs text-slate-500">
-            <span>Agent Confidence</span>
-            <span className="font-bold">{(r.confidence_score * 100).toFixed(0)}%</span>
-          </div>
-          <div className="h-2.5 rounded-full bg-white/60">
-            <div className={`h-2.5 rounded-full ${
-              r.confidence_score >= 0.7 ? 'bg-emerald-500' :
-              r.confidence_score >= 0.4 ? 'bg-amber-500' : 'bg-red-500'
-            }`} style={{ width: `${r.confidence_score * 100}%` }} />
-          </div>
-        </div>
-      )}
 
       {/* Gemini explanation */}
       {r?.why_decision && (
         <div className="mt-4 rounded-lg bg-white/60 border border-white/80 p-4">
           <p className="text-xs font-semibold text-slate-500 mb-1">🤖 AGENT EXPLANATION</p>
           <p className="text-sm text-slate-700 leading-relaxed">{r.why_decision}</p>
-        </div>
-      )}
-
-      {/* Score bars side by side */}
-      {doc && (
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <div className="rounded-lg bg-white/60 p-3">
-            <div className="flex justify-between text-xs mb-1">
-              <span className="text-slate-500">Internal Consistency</span>
-              <span className="font-bold text-slate-700">{(doc.internal_consistency_score * 100).toFixed(0)}%</span>
-            </div>
-            <div className="h-2 rounded-full bg-slate-200">
-              <div className={`h-2 rounded-full ${doc.internal_consistency_score >= 0.7 ? 'bg-emerald-500' : doc.internal_consistency_score >= 0.4 ? 'bg-amber-500' : 'bg-red-500'}`}
-                style={{ width: `${doc.internal_consistency_score * 100}%` }} />
-            </div>
-          </div>
-          <div className="rounded-lg bg-white/60 p-3">
-            <div className="flex justify-between text-xs mb-1">
-              <span className="text-slate-500">AI-Generation Risk</span>
-              <span className="font-bold text-slate-700">{(doc.ai_generation_score * 100).toFixed(0)}%</span>
-            </div>
-            <div className="h-2 rounded-full bg-slate-200">
-              <div className={`h-2 rounded-full ${doc.ai_generation_score >= 0.5 ? 'bg-red-500' : doc.ai_generation_score >= 0.3 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                style={{ width: `${doc.ai_generation_score * 100}%` }} />
-            </div>
-          </div>
         </div>
       )}
 
@@ -358,7 +289,7 @@ function VerdictCard({ result }: { result: VerificationResult }) {
       )}
 
       <p className="mt-4 text-[10px] text-slate-400">
-        Result produced by DocFlow AI Agent (Gemini Vision + deterministic rules). Not an authenticity certificate.
+        Results reflect configured checks only and are not an authenticity certificate.
         A human reviewer makes the final admission decision. Documents are never auto-rejected.
       </p>
     </div>
@@ -387,18 +318,24 @@ export default function ApplicationDetail({ token }: { token: string }) {
     ]).catch(e => setError(e instanceof Error ? e.message : 'Failed to load')).finally(() => setLoading(false));
   }, [id, token]);
 
-  // Poll every 3 s while processing
+  const docsInFlight = docs.some((doc) => ['uploaded', 'queued', 'processing', 'retry'].includes(doc.metadata.processing_state));
+
+  // Refresh each document independently while any uploaded file is still running.
   useEffect(() => {
-    if (!id || !result || TERMINAL.includes(result.status)) return;
-    const iv = setInterval(() => getVerificationResult(token, id).then(setResult).catch(() => {}), 3000);
+    if (!id || ((!result || TERMINAL.includes(result.status)) && !docsInFlight)) return;
+    const iv = setInterval(() => {
+      void getVerificationResult(token, id).then(setResult).catch(() => {});
+      void getDocuments(token, id).then(setDocs).catch(() => {});
+    }, 3000);
     return () => clearInterval(iv);
-  }, [id, token, result?.status]);
+  }, [id, token, result?.status, docsInFlight]);
 
   if (loading) return <p className="text-slate-500">Loading…</p>;
   if (error)   return <p className="text-red-600">{error}</p>;
   if (!id || !app) return <p className="text-slate-500">Application not found.</p>;
 
   const appStatus  = app.status ?? 'queued';
+  const displayStatus = appStatus === 'suspicious' ? 'needs_review' : appStatus;
   const isTerminal = result ? TERMINAL.includes(result.status) : false;
   const isProcessing = !isTerminal;
 
@@ -413,9 +350,9 @@ export default function ApplicationDetail({ token }: { token: string }) {
             <h1 className="text-xl font-bold text-slate-900">Document Verification</h1>
             <p className="mt-0.5 font-mono text-xs text-slate-400">{id}</p>
           </div>
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold flex-shrink-0 ${STATUS_PILL[appStatus] ?? 'bg-slate-100 text-slate-700'}`}>
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold flex-shrink-0 ${STATUS_PILL[displayStatus] ?? 'bg-slate-100 text-slate-700'}`}>
             {isProcessing && <span className="h-2 w-2 animate-pulse rounded-full bg-current" />}
-            {appStatus.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}
+            {(displayStatus === 'needs_review' ? 'Needs Manual Review' : displayStatus).replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}
           </span>
         </div>
         {docs.length > 0 && (
@@ -424,20 +361,20 @@ export default function ApplicationDetail({ token }: { token: string }) {
       </div>
 
       {/* Pipeline stages */}
-      <PipelineCard result={result} processing={isProcessing} />
+      {docs.length <= 1 && <PipelineCard result={result} processing={isProcessing} />}
 
       {/* Extracted fields — shown as soon as we have extraction data */}
-      {isTerminal && result?.extracted_document && (
+      {docs.length <= 1 && isTerminal && result?.document_type_status === 'supported' && result?.extracted_document && (
         <ExtractedDocumentCard doc={result.extracted_document} />
       )}
 
       {/* Verdict */}
-      {isTerminal && result && result.decision && (
+      {docs.length <= 1 && isTerminal && result && result.decision && (
         <VerdictCard result={result} />
       )}
 
       {/* Internal validation table */}
-      {isTerminal && result?.validations && result.validations.length > 0 && (
+      {docs.length <= 1 && isTerminal && result?.validations && result.validations.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-6">
           <h2 className="text-base font-bold text-slate-900 mb-4">Internal Consistency Checks</h2>
           <div className="overflow-x-auto">
@@ -475,15 +412,67 @@ export default function ApplicationDetail({ token }: { token: string }) {
       {docs.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-6">
           <h2 className="text-base font-bold text-slate-900 mb-3">Uploaded Documents</h2>
-          {docs.map(d => (
-            <div key={d.id} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
-              <span className="text-xl">{d.content_type === 'application/pdf' ? '📄' : '🖼️'}</span>
-              <div>
-                <p className="text-sm font-semibold text-slate-700">{d.filename}</p>
-                <p className="text-xs text-slate-400">{d.content_type} · {new Date(d.created_at).toLocaleString()}</p>
-              </div>
-            </div>
-          ))}
+          <div className="space-y-3">
+            {docs.map((d) => {
+              const r = d.result;
+              const payload = r?.typed_payload;
+              const fields = payload ? Object.entries(payload).filter(([key, value]) =>
+                !['document_type', 'schema_version', 'warnings'].includes(key) && value != null && value !== '',
+              ) : [];
+              return (
+                <article key={d.document_id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{d.metadata.filename}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {d.metadata.document_type} · {d.metadata.content_type} · {d.metadata.page_count ?? '—'} page(s)
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        Uploaded {new Date(d.metadata.timestamps.uploaded_at).toLocaleString()}
+                        {d.metadata.timestamps.processed_at ? ` · Processed ${new Date(d.metadata.timestamps.processed_at).toLocaleString()}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 text-xs font-semibold">
+                      <span className={`rounded-full px-2.5 py-1 ${STATUS_PILL[d.metadata.processing_state] ?? 'bg-slate-200 text-slate-700'}`}>
+                        {d.metadata.processing_state.replace('_', ' ')}
+                      </span>
+                      {r?.decision && <span className={`rounded-full px-2.5 py-1 ${STATUS_PILL[r.decision] ?? 'bg-slate-200 text-slate-700'}`}>
+                        {r.decision.replace('_', ' ')}
+                      </span>}
+                    </div>
+                  </div>
+
+                  {r && (r.document_type_status === 'unsupported' || r.document_type_status === 'uncertain') && (
+                    <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      {r.reasoning?.summary ?? 'This type is unsupported or uncertain. OCR evidence was retained; no type-specific checks were run. Human classification is required.'}
+                    </p>
+                  )}
+
+                  {fields.length > 0 && (
+                    <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {fields.map(([key, value]) => (
+                        <div key={key} className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                          <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{key.replaceAll('_', ' ')}</dt>
+                          <dd className="mt-1 break-words text-sm text-slate-800">{displayValue(value)}</dd>
+                          {r?.field_provenance?.[key] && <dd className="mt-1 text-[10px] text-slate-400">Evidence: {r.field_provenance[key].join(', ') || 'No matching OCR text reference'}</dd>}
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+
+                  {r && (
+                    <details className="mt-3 rounded-md border border-slate-200 bg-white p-3">
+                      <summary className="cursor-pointer text-xs font-semibold text-sky-800">OCR and page evidence</summary>
+                      <ul className="mt-2 flex flex-wrap gap-2">
+                        {d.evidence_refs.map((ref) => <li key={ref.reference_id} className="rounded bg-slate-100 px-2 py-1 text-[11px] text-slate-600">{ref.reference_id}</li>)}
+                      </ul>
+                      <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-600">{r.ocr_text || 'No OCR text was available. Open the saved page through the reviewer file preview.'}</pre>
+                    </details>
+                  )}
+                </article>
+              );
+            })}
+          </div>
         </div>
       )}
 

@@ -1,7 +1,8 @@
 import csv
 
-from services.agent.app.processing.models import ApplicationForm, ExtractedFields, FieldValidation
-from services.agent.app.processing.pipeline import ProcessingResult
+from services.agent.app.processing.models import AgentReasoning, ApplicationForm, ExtractedDocument, ExtractedFields, FieldValidation, QualityFlags
+from services.agent.app.processing.pipeline import EvidenceReference, ProcessingResult
+from services.agent.app.processing.schemas import adapt_legacy_marksheet
 from services.agent.app.processing.validate import decide, validate
 from eval.generate import generate_dataset
 from eval.run_eval import run_evaluation
@@ -30,10 +31,18 @@ def test_evaluator_calculates_and_writes_measured_metrics(tmp_path):
         validations = validate(application, extracted)
         return ProcessingResult(
             input_type="image",
+            document_type="marksheet",
+            document_type_status="supported",
+            page_count=1,
+            evidence_refs=[EvidenceReference(reference_id="page:1:uploaded_page", page_number=1, source="uploaded_page")],
             ocr_text="synthetic test OCR",
             extracted=extracted,
+            extracted_document=ExtractedDocument(extraction_method="synthetic_test"),
+            typed_payload=adapt_legacy_marksheet(extracted),
             validations=validations,
             decision=decide(validations),
+            quality=QualityFlags(),
+            reasoning=AgentReasoning(summary="Synthetic extraction.", why_decision="Synthetic fixture evaluation.", confidence_score=None),
             timings_ms={
                 "document": 0.0,
                 "ocr": 1.0,

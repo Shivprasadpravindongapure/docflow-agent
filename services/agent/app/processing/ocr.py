@@ -1,10 +1,17 @@
 from io import BytesIO
+from pathlib import Path
+import shutil
 import subprocess
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 import pytesseract
 
 MAX_IMAGE_PIXELS = 4_000_000
+
+# Windows installers commonly use this path even when they do not update PATH.
+_WINDOWS_TESSERACT = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+if not shutil.which("tesseract") and _WINDOWS_TESSERACT.is_file():
+    pytesseract.pytesseract.tesseract_cmd = str(_WINDOWS_TESSERACT)
 
 
 class InvalidImageError(ValueError):

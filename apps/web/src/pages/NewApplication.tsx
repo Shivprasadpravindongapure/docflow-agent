@@ -6,14 +6,16 @@ const ACCEPTED_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
 const MAX_SIZE = 2 * 1024 * 1024;
 
 const DOC_TYPES = [
-  { value: 'marksheet', label: 'Marksheet' },
-  { value: 'caste_certificate', label: 'Caste / Category Certificate' },
-  { value: 'ews_certificate', label: 'EWS Certificate' },
-  { value: 'fee_receipt', label: 'Fee Receipt' },
-  { value: 'nationality_certificate', label: 'Nationality Certificate' },
-  { value: 'domicile_certificate', label: 'Domicile Certificate' },
-  { value: 'income_certificate', label: 'Income Certificate' },
-  { value: 'other', label: 'Other' },
+  { value: 'marksheet', label: 'Marksheet', supported: true },
+  { value: 'birth_certificate', label: 'Birth Certificate', supported: false },
+  { value: 'identity_card', label: 'Identity Card', supported: false },
+  { value: 'caste_certificate', label: 'Caste / Category Certificate', supported: false },
+  { value: 'ews_certificate', label: 'EWS Certificate', supported: false },
+  { value: 'fee_receipt', label: 'Fee Receipt', supported: false },
+  { value: 'nationality_certificate', label: 'Nationality Certificate', supported: false },
+  { value: 'domicile_certificate', label: 'Domicile Certificate', supported: false },
+  { value: 'income_certificate', label: 'Income Certificate', supported: false },
+  { value: 'unknown', label: 'Unknown / Needs classification', supported: false },
 ];
 
 interface SelectedFile {
@@ -33,7 +35,7 @@ export default function NewApplication({ token }: NewApplicationProps) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [files, setFiles] = useState<SelectedFile[]>([]);
-  const [currentDocType, setCurrentDocType] = useState('marksheet');
+  const [currentDocType, setCurrentDocType] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -84,6 +86,10 @@ export default function NewApplication({ token }: NewApplicationProps) {
       setError('Please add at least one document.');
       return;
     }
+    if (files.some((selected) => !selected.docType)) {
+      setError('Choose a document type for every file. Use Unknown / Needs classification if you are unsure.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -100,7 +106,7 @@ export default function NewApplication({ token }: NewApplicationProps) {
       // Upload each file
       for (let i = 0; i < files.length; i++) {
         setUploadProgress(`Uploading document ${i + 1} of ${files.length}…`);
-        await uploadDocument(token, app.id, files[i].file);
+        await uploadDocument(token, app.id, files[i].file, files[i].docType);
       }
 
       setStep('done');
@@ -168,9 +174,8 @@ export default function NewApplication({ token }: NewApplicationProps) {
               onChange={(e) => setCurrentDocType(e.target.value)}
               className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
             >
-              {DOC_TYPES.map((dt) => (
-                <option key={dt.value} value={dt.value}>{dt.label}</option>
-              ))}
+              <option value="">Select a type…</option>
+              {DOC_TYPES.map((dt) => <option key={dt.value} value={dt.value}>{dt.label}{dt.supported ? ' · supported' : ' · review only'}</option>)}
             </select>
           </label>
           <p className="mt-1 text-xs text-slate-500">
@@ -244,9 +249,8 @@ export default function NewApplication({ token }: NewApplicationProps) {
                     onChange={(e) => updateDocType(sf.id, e.target.value)}
                     className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 outline-none focus:border-sky-500"
                   >
-                    {DOC_TYPES.map((dt) => (
-                      <option key={dt.value} value={dt.value}>{dt.label}</option>
-                    ))}
+                    <option value="">Select a type…</option>
+                    {DOC_TYPES.map((dt) => <option key={dt.value} value={dt.value}>{dt.label}{dt.supported ? ' · supported' : ' · review only'}</option>)}
                   </select>
 
                   {/* Remove button */}

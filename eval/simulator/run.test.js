@@ -115,6 +115,7 @@ for (const extension of ['.pdf', '.png']) {
         return Response.json({ id: 'application-1', status: 'draft' }, { status: 201 });
       }
       if (pathname === '/applications/application-1/documents') {
+        assert.equal(options.headers['x-document-type'], 'marksheet');
         assert.equal(
           options.headers['content-type'],
           extension === '.pdf' ? 'application/pdf' : 'image/png',

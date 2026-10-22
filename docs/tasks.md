@@ -1,10 +1,10 @@
 # DocFlow Agent: Phased Delivery Tasks
 
-**Status:** Phases 1-5 complete. Phase 6 simulator implementation and mocked tests pass; its live 100-document synthetic acceptance run is pending. The owner approved this roadmap/documentation update only; no subsequent phase implementation is authorized.
+**Status:** Phases 1-5 and 7 are recorded complete. Phase 6's live 100-document synthetic run passed on 2026-10-22. V2 Stages B-F passed; Stage G documentation/release-candidate checks are underway under the owner's sequential-stage authorization. Phases 8-9 remain incomplete.
 
 The original nine phases are revised below to reflect the owner's requested future multi-document workflow and required safeguards. The Python processing agent replaces the separate PDF-only Python microservice and TypeScript processing worker. Work strictly one phase at a time; a roadmap approval does not approve implementation. For each separately authorized phase, implement only that phase, run its acceptance commands, update its checkboxes, report actual output, and stop.
 
-**Scope boundary:** marksheets are the only currently supported processing category. The requested target workflow also names caste/category certificates, EWS certificates, fee receipts, nationality certificates, domicile certificates, and income certificates; these are planned only. Each category needs explicit fields/rules and synthetic fixtures before implementation. Never use real applicant data in development, testing, or evaluation. Consistency checks are not authenticity or fraud detection, and the system must not claim an unvalidated “realness” or confidence percentage or auto-reject an applicant.
+**Scope boundary:** marksheets are the only currently supported verification category. Birth certificates, identity cards, caste/category certificates, EWS certificates, fee receipts, nationality certificates, domicile certificates, and income certificates can be explicitly categorized, but remain unsupported until each has its own approved schema, deterministic rules, and synthetic fixtures. Unsupported/unknown/conflicting classifications preserve evidence and route to `needs_review`. Never use real applicant data in development, testing, or evaluation. Consistency checks are not authenticity or fraud detection, and the system must not claim an unvalidated “realness” or confidence percentage or auto-reject an applicant.
 
 ## Preconditions and repository facts
 
@@ -121,10 +121,10 @@ The original nine phases are revised below to reflect the owner's requested futu
 
 **Stop point:** complete an end-to-end synthetic multi-document submission/status and human-review experience in the browser. The processing engine remains marksheet-only in this phase; other requested categories must be clearly marked as planned/not supported, not silently accepted as verified.
 
-- [x] Build an applicant workflow with registration/login, application form, a document checklist, multi-file upload, per-file type/size validation, and clear submission confirmation using the TypeScript API. Preserve separate document types and statuses within an application.
+- [x] Build an applicant workflow with registration/login, application form, a document checklist, multi-file upload, required per-file type/size validation, and clear submission confirmation using the TypeScript API. Preserve separate document types, typed results, evidence references, and statuses within an application.
   - Files: `apps/web/src/App.tsx`, `apps/web/src/api/`, `apps/web/src/pages/NewApplication.tsx`, `apps/web/src/pages/ApplicationDetail.tsx`, `apps/web/src/pages/Dashboard.tsx`
   - Proof: `cd apps/web; npm test; npm run build`; browser flow uploads synthetic marksheets and confirms document status.
-- [x] Implement reviewer queue and document detail with page preview, extracted fields/evidence, applicant-form comparison, validation reasons, audit trail, and approve or return-for-correction with a required note. Do not add an authenticity/fraud verdict or automatic rejection.
+- [x] Implement reviewer queue and document detail with per-file page/OCR evidence, typed extraction, applicant-form comparison, validation reasons, audit trail, and approve or return-for-correction with a required note. Do not add an authenticity/fraud verdict or automatic rejection.
   - Files: `apps/web/src/pages/ReviewerQueue.tsx`, `apps/web/src/pages/ReviewerDetail.tsx`, `apps/api/src/server.ts`, `apps/api/src/server.test.ts`
   - Proof: API/UI tests verify per-document ownership, reviewer authorization, required note, audit event, and human-controlled final decision using synthetic records.
 - [x] Configure API URL from environment and keep authentication tokens out of persistent browser storage unless a reviewed decision explicitly allows it.
@@ -132,6 +132,8 @@ The original nine phases are revised below to reflect the owner's requested futu
   - Proof: `cd apps/web && npm run build`; configuration and auth tests pass.
 
 **Phase acceptance: PASS.** Full React router architecture with dashboard, creation, upload, live SSE tracking, field comparison, reviewer queue, reviewer detail decision recording, and document file retrieval implemented. API endpoints (`/applications/:id/result`, `/applications/:id/documents`, `/applications/:id/documents/:docId/file`, `/applications/:id/audit`, `/reviewer/queue`, `/reviewer/applications/:id`, `/reviewer/applications/:id/review`, JPEG upload) verified with integration tests (`npm test` in `apps/api` passed 5/5; `apps/web` passed 2/2 and built in 933ms).
+
+**Document-specific result contract follow-up:** upload now requires `X-Document-Type`; each document is processed and returned independently. `marksheet.v1` is the only supported typed payload. Unknown, unsupported, and strong OCR title conflicts retain page/OCR evidence and are routed to `needs_review` with no marksheet checks. Case-level status is aggregated across all file jobs. This follow-up passed the acceptance checks recorded under V2 Stage G.
 
 ## Phase 8 — Security, privacy, and safe deployment readiness
 
@@ -173,3 +175,100 @@ The original nine phases are revised below to reflect the owner's requested futu
   - Proof: `cd apps/api && npm test`; `cd services/agent && pytest`; `cd apps/web && npm run build`; `git status --short`; `git ls-files .env eval/data`.
 
 **Phase acceptance:** all authorized synthetic acceptance commands have actual results, README metrics match `eval/results/`, and `.env`/`eval/data/` are not tracked. Real-data use is outside repository development, testing, and evaluation; any future external pilot would require independent legal, privacy, security, and institutional approvals and is not authorized by this plan.
+
+## V2 Stage B — OCR fallback and RAG ingestion foundation
+
+**Status: PASS (2026-10-22).**
+
+- [x] Run Tesseract/local marksheet extraction before Gemini; use Gemini only if local OCR or extraction fails or has no usable labelled fields. Preserve deterministic validation and review outcomes.
+- [x] Enable pgvector in the owner-confirmed Neon development database and add migration `005_policy_rag.sql` for policy source versions, lifecycle status, context metadata, content hashes, chunks, and `vector(3072)` embeddings.
+- [x] Add synthetic-only, idempotent policy ingestion, deterministic chunking, immutable version checks, explicit superseded/obsolete states, embedding validation, and maintainer CLI dry-run.
+- [x] Add a clearly labelled invented demo policy and unit tests. Authoritative or externally sourced requirements are rejected until approved separately.
+- [x] Acceptance: `python -m pytest services/agent/tests -q -p no:cacheprovider --basetemp=.pytest-tmp` — **59 passed, 6 dependency deprecation warnings**.
+- [x] CLI check: `python -m services.agent.app.policy_cli docs/examples/synthetic_marksheet_policy.json --dry-run` — **dry_run=ok, 1 chunk, max 497 characters**.
+- [x] Disposable-schema migration check found `policy_sources`, `policy_chunks`, and `public.vector(3072)`; temporary schema dropped. Applied the additive migration to the approved development `public` schema; both tables are present and the vector extension reports version `0.8.6`.
+- [x] One synthetic Gemini embedding was stored in a disposable schema and read back as 3072 dimensions; test schema/data dropped afterward.
+- [x] Owner authorized the remaining stages to proceed sequentially.
+
+**Groq follow-up (implemented in Stage D):** `openai/gpt-oss-20b` is text-only and runs only after the OCR/Gemini path when usable OCR text exists. It never OCRs images. The fallback uses one bounded no-retry request and mocked tests; keep use within the owner's free-tier account.
+
+## V2 Stage C — Grounded retrieval and answer contract
+
+**Status: PASS (2026-10-22).**
+
+- [x] Add context-filtered policy retrieval using the same Gemini embedding model and dimensions as ingestion; filter to active, effective policy versions and the requested workflow/document type/organization/jurisdiction.
+- [x] Return typed retrieval metadata and source/version/chunk/section excerpts. Use cosine threshold `0.55` as an initial unvalidated setting; preserve candidates and abstain when evidence is insufficient.
+- [x] Add Gemini answer generation over retrieved evidence with prompt-injection handling and citation allowlisting. Invalid citations, generation errors, unsupported document types, and no evidence route to abstention while preserving evidence for review.
+- [x] Add `marksheet.v1` typed payload and backward-compatible response adapter. Other document types remain unsupported and do not inherit marksheet fields.
+- [x] `python -m pytest services/agent/tests -q -p no:cacheprovider --basetemp=.pytest-tmp` — **69 passed, 6 dependency deprecation warnings**.
+- [x] `python -m eval.rag.run_eval` — 3 positive synthetic queries, precision@3 **0.667**, recall@3 **1.000**, 2/2 no-evidence cases abstained, valid citations, superseded version excluded. Output: ignored `eval/results/rag/summary.json`.
+- [x] Evaluation uses deterministic synthetic fixture vectors to validate database filtering/versioning/abstention/citation mechanics. It does not measure semantic embedding quality or real-world accuracy.
+
+**Implementation note:** exact cosine search is used for the current 3072-dimensional vector column; pgvector's HNSW/IVFFlat `vector` indexes support up to 2000 dimensions. Any index/model change requires a measured review.
+
+## V2 Stage D — Bounded agent and deterministic verification
+
+**Status: PASS (2026-10-22).** Stage E API/database/reviewer integration has passed and Stage F is underway.
+
+- [x] Implement case-scoped bounded orchestration with an explicit tool allowlist (`inspect_document`, `check_field`, `retrieve_policy`), max six tool calls, a 25-second overall budget, and bounded planner timeout.
+- [x] Restrict planner context to case-local document metadata/status/field names. Reject out-of-case documents, unsupported/duplicate tools, and field checks not present in deterministic validation output.
+- [x] Preserve deterministic validations independently of planner/tool output. Policy abstention, malformed plans, tool failures, and budget exhaustion remain review states; the LLM does not decide eligibility or authenticity.
+- [x] Store only minimal trace metadata; exclude OCR text, field values, query text, credentials, and raw exception details from the trace.
+- [x] Add synthetic unit coverage for tool allowlist/budgets, injection-safe planner prompts, case isolation, sibling continuation, policy abstention, and trace redaction.
+- [x] `python -m pytest services/agent/tests -q -p no:cacheprovider --basetemp=.pytest-tmp` — **86 passed, 6 dependency deprecation warnings**.
+- [x] `cd apps/api && npm run build` — passed.
+- [x] `cd apps/web && npm run build` — passed.
+- [ ] `cd apps/api && npm test` — blocked in this run: configured Neon hostname returned `getaddrinfo ENOTFOUND`; the integration suite requires PostgreSQL and did not execute its tests.
+- [x] Safety correction: legacy model authenticity/fraud/AI-generation scores no longer drive or display as validation outcomes; deterministic checks control status, and legacy scores are null/ignored.
+- [x] Add Groq `openai/gpt-oss-20b` as a text-only fallback after OCR and Gemini, only when OCR text is present. The image is never sent to Groq. The fallback is lazy-loaded, bounded, makes no retries, and has mocked tests; usage must remain within the owner's free-tier account limits.
+
+**Stage E implementation note:** Stage D remains a Python orchestration core. Stage E now connects it through an authenticated owner-scoped Express route and persists reviewer-visible run/finding/trace records; end-to-end database acceptance remains pending.
+
+## V2 Stage E — API/database and reviewer UI integration
+
+**Status: PASS (2026-10-22).**
+
+- [x] Add additive migration `006_agent_runs.sql` for reviewer role and case assistant run, finding, and trace records with foreign keys and indexes.
+- [x] Add an owner-authenticated Express route that sends only completed documents for the requested applicant case to the internal case-agent endpoint.
+- [x] Protect the FastAPI case-agent route using shared `DOCFLOW_INTERNAL_TOKEN`; direct unauthenticated processing access is rejected.
+- [x] Persist findings, source-bearing policy answers, redacted trace metadata, and audit event in a transaction; preserve human review as a separate decision record.
+- [x] Gate reviewer queue, detail, and decision routes on persisted `reviewer` role.
+- [x] Add reviewer UI controls, policy citation excerpts/version display, run state and tool timeline.
+- [x] `cd apps/api && npm run build` — passed.
+- [x] `cd apps/web && npm run build` — passed.
+- [x] Focused agent endpoint/runner tests — **21 passed, 5 dependency deprecation warnings**.
+- [x] `cd apps/api && npm test` — **5 passed** against a disposable Neon schema after synthetic signup fixtures were updated to include required names.
+- [x] `cd apps/api && npm run build` — passed.
+- [x] `cd apps/web && npm test` — **2 passed**.
+- [x] `cd apps/web && npm run build` — passed.
+- [x] `python -m pytest services/agent/tests -q -p no:cacheprovider --basetemp=.pytest-tmp` — **88 passed, 6 dependency deprecation warnings**.
+- [x] Applied migration `006_agent_runs.sql` to the approved development Neon `public` schema; confirmed run, finding, trace tables and `users.role`.
+
+## V2 Stage F — Security, reliability, evaluation, and demo readiness
+
+**Status: PASS (2026-10-22).**
+
+- [x] Record code-level trust boundaries, verified controls, known gaps, and non-deployment position in `docs/SECURITY_REVIEW.md`.
+- [x] Redact API/worker error logging and persisted job failures to exception classes; worker regression checks ensure raw synthetic error text is not persisted.
+- [x] Verify missing/invalid private token, cross-account run denial, role-gated reviewer queue, and upstream assistant unavailable/timeout responses with synthetic tests.
+- [x] Keep `.env`, `eval/data`, and `eval/results` ignored; no `.env` or generated fixture files are tracked.
+- [x] Confirm native Tesseract 5.5.3.20260724 reads expected labels from a synthetic image. Generated a synthetic simulator account and seeded PDFs.
+- [x] Run `node --env-file=.env eval/simulator/run.js --count 100 --seed 2027 --rate-per-second 2 --timeout-seconds 300 --output eval/results/realtime-stagef-20261022.csv` — **100 submitted, 100 completed, 100% completion, median decision 62,832 ms, p95 94,897 ms, 0 failures, 0 retries, 96 answer-match cases evaluated, 100% answer match**. Four cases were `not_evaluated`; Gemini/Groq were disabled in the worker, so results measure local OCR/rules and API/worker flow only.
+- [x] Verify the saved CSV contains 100 rows. Output is under ignored `eval/results/`; it contains synthetic-only data.
+- [x] Existing Stage C synthetic RAG mechanics output remains under ignored `eval/results/rag/summary.json`; it measures retrieval/version/citation mechanics, not semantic or real-world accuracy.
+- [x] Final regression set: Python **88 passed**, API **5 passed**, web **2 passed**, API/web builds passed; PDF generator tests **5 passed**.
+
+## V2 Stage G — Documentation and V2 release candidate
+
+**Status: IN PROGRESS (2026-10-22).**
+
+- [x] Reconcile `README.md`, `docs/PLAN.md`, `docs/tasks.md`, `docs/MASTER_PLAN_V2.md`, and `docs/SECURITY_REVIEW.md` with actual implementation/results and remaining gaps.
+- [x] Document environment variables including the private service token, OCR/model fallback order, supported marksheet-only scope, and free-tier Groq constraint.
+- [x] Verify `.env` and generated `eval/data`, `eval/results`, and local test output remain ignored and untracked.
+- [x] Enforce the owner-supplied document-specific result contract: explicit category, separate shared metadata and per-file result, versioned marksheet payload/provenance, OCR/page evidence, safe unsupported/uncertain routing, and aggregate multi-file status.
+- [x] `python -m pytest services/agent/tests eval/test_run_eval.py -q -p no:cacheprovider --basetemp=.pytest-tmp` â€” **93 passed, 6 dependency deprecation warnings**.
+- [x] `cd apps/api && npm test` â€” **5 passed**; `npm run build` â€” passed.
+- [x] `cd apps/web && npm test` â€” **2 passed**; `npm run build` â€” passed.
+- [x] `node --test eval/simulator/run.test.js` â€” **8 passed**; synthetic simulator uploads now send `X-Document-Type: marksheet`.
+- [ ] Verify a clean setup from a fresh checkout/environment. The current Windows Tesseract install and complete simulator run are verified; a fresh-environment install has not been performed.
+- [ ] Record owner review of V2 release-candidate limits before treating the V2 plan as complete. No commit or deployment was made.

@@ -42,13 +42,13 @@ export interface ExtractedDocument {
   result_status: string | null;
   grade: string | null;
   division: string | null;
-  internal_consistency_score: number;
+  internal_consistency_score: number | null;
   consistency_issues: string[];
-  ai_generation_score: number;
+  ai_generation_score: number | null;
   suspicion_signals: string[];
   authenticity_signals: string[];
   gemini_verdict: string;
-  gemini_reasoning: string;
+  gemini_reasoning: string | null;
   extraction_method: string;
   warnings: string[];
 }
@@ -57,7 +57,7 @@ export interface AgentReasoning {
   summary: string;
   why_decision: string;
   flags: string[];
-  confidence_score: number;
+  confidence_score: number | null;
 }
 
 export interface QualityFlags {
@@ -71,6 +71,13 @@ export interface QualityFlags {
 export interface VerificationResult {
   status: string;
   decision?: string;
+  document_type?: string;
+  document_type_status?: 'supported' | 'unsupported' | 'uncertain';
+  typed_payload?: Record<string, unknown> | null;
+  page_count?: number | null;
+  evidence_refs?: Array<{ reference_id: string; page_number: number; source: string }>;
+  field_provenance?: Record<string, string[]>;
+  metadata?: Record<string, unknown>;
   match_score?: number;
   validations?: ValidationFlag[];
   reasoning?: AgentReasoning;
@@ -82,10 +89,18 @@ export interface VerificationResult {
 }
 
 export interface DocumentInfo {
-  id: string;
-  filename: string;
-  content_type: string;
-  created_at: string;
+  application_id: string;
+  document_id: string;
+  metadata: {
+    document_type: string;
+    filename: string;
+    content_type: string;
+    page_count: number | null;
+    processing_state: string;
+    timestamps: { uploaded_at: string; processed_at: string | null };
+  };
+  evidence_refs: Array<{ reference_id: string; page_number: number; source: string }>;
+  result: (VerificationResult & { processing_state: string }) | null;
 }
 
 export interface AuditEvent {
@@ -114,6 +129,12 @@ export interface ReviewerAppDetail {
   validations: ValidationFlag[];
   audit: AuditEvent[];
   reviews: Array<{ id: string; decision: string; note: string; created_at: string; reviewer_id: string }>;
+  agent_runs: Array<{
+    id: string; question: string; status: string; summary: string; reason: string | null; created_at: string;
+    policy_answers_json: Array<{ status: string; answer: string | null; reason: string | null; citations: Array<{ citation_id: string; source_id: string; version: string; title: string; section: string | null; excerpt: string }> }>;
+    findings: ValidationFlag[];
+    traces: Array<{ ordinal: number; tool: string; document_id: string | null; outcome: string; duration_ms: number; error_code: string | null; source_refs: string[] }>;
+  }>;
 }
 
 interface ApiError {
@@ -188,13 +209,14 @@ export async function createApplication(
 export async function uploadDocument(
   token: string,
   applicationId: string,
-  file: File
+  file: File,
+  documentType: string,
 ): Promise<{ document_id: string; job_id: string; status: string }> {
   const response = await fetch(
     `${API_BASE_URL}/applications/${encodeURIComponent(applicationId)}/documents`,
     {
       method: 'POST',
-      headers: { ...authHeaders(token), 'Content-Type': file.type },
+      headers: { ...authHeaders(token), 'Content-Type': file.type, 'X-Document-Type': documentType },
       body: file,
     }
   );
@@ -250,6 +272,15 @@ export async function getReviewerAppDetail(token: string, applicationId: string)
     `${API_BASE_URL}/reviewer/applications/${encodeURIComponent(applicationId)}`,
     { headers: authHeaders(token) }
   );
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function startCaseAgentRun(token: string, applicationId: string, question: string): Promise<{ id: string; status: string; summary: string }> {
+  const response = await fetch(`${API_BASE_URL}/applications/${encodeURIComponent(applicationId)}/agent-runs`, {
+    method: 'POST', headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+  });
   if (!response.ok) throw new Error(await readError(response));
   return response.json();
 }

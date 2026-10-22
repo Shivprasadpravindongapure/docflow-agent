@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
 
 from services.agent.app.main import app
+from services.agent.app import main as agent_main
 
 client = TestClient(app)
 
@@ -33,6 +34,41 @@ def test_health_returns_agent_service_payload() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "agent"}
+
+
+def test_internal_case_route_requires_service_token() -> None:
+    payload = {
+        "application_id": "synthetic-case-1", "workflow": "marksheet_review", "question": "Review checks",
+        "documents": [{"document_id": "synthetic-doc-1", "document_type": "marksheet", "processing_status": "completed"}],
+    }
+    response = client.post("/internal/cases/run", json=payload)
+
+    assert response.status_code == 401
+    invalid = client.post("/internal/cases/run", headers={"X-Docflow-Internal-Token": "incorrect"}, json=payload)
+    assert invalid.status_code == 401
+
+
+def test_internal_case_route_calls_bounded_runner_only_after_token(monkeypatch) -> None:
+    from services.agent.app.bounded_agent import CaseAgentResult
+
+    class FakeDb:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def execute(self, _query): return None
+
+    monkeypatch.setenv("DOCFLOW_INTERNAL_TOKEN", "synthetic-internal-token")
+    monkeypatch.setattr(agent_main.psycopg, "connect", lambda *_args, **_kwargs: FakeDb())
+    monkeypatch.setattr(agent_main, "database_url", lambda: "postgresql://synthetic")
+    monkeypatch.setattr(agent_main, "run_case_agent", lambda _db, request: CaseAgentResult(
+        status="completed", application_id=request.application_id, summary="Synthetic completed run.",
+    ))
+    response = client.post("/internal/cases/run", headers={"X-Docflow-Internal-Token": "synthetic-internal-token"}, json={
+        "application_id": "synthetic-case-1", "workflow": "marksheet_review", "question": "Review checks",
+        "documents": [{"document_id": "synthetic-doc-1", "document_type": "marksheet", "processing_status": "completed"}],
+    })
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
 
 
 def test_extract_returns_selectable_text_for_text_pdf() -> None:

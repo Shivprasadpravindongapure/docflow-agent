@@ -3,7 +3,68 @@ Internal consistency validation.
 Does NOT cross-check against user-provided form data (we may not have real data).
 Instead checks whether the document's own fields are internally consistent.
 """
-from .models import Decision, ExtractedDocument, FieldValidation
+from .models import ApplicationForm, Decision, ExtractedDocument, ExtractedFields, FieldValidation, normalize_date
+from rapidfuzz.fuzz import ratio
+
+
+def validate(application: ApplicationForm, extracted: ExtractedFields) -> list[FieldValidation]:
+    """Compare supported marksheet fields with applicant-supplied values."""
+    output: list[FieldValidation] = []
+    name_score = ratio(application.name.casefold(), (extracted.name or "").casefold()) / 100
+    name_result = "missing" if not extracted.name else ("pass" if name_score >= 0.90 else "mismatch")
+    output.append(FieldValidation(
+        field="name", expected=application.name, extracted=extracted.name, result=name_result,
+        reason=(f"Name similarity {name_score:.2f} meets the 0.90 threshold." if name_result == "pass" else
+                "Name was not extracted from the document." if name_result == "missing" else
+                f"Name similarity {name_score:.2f} is below the 0.90 threshold."),
+    ))
+    expected_roll = "".join(c for c in application.roll_number.casefold() if c.isalnum())
+    actual_roll = "".join(c for c in (extracted.roll_number or "").casefold() if c.isalnum())
+    output.append(FieldValidation(
+        field="roll_number", expected=application.roll_number, extracted=extracted.roll_number,
+        result="missing" if not actual_roll else ("pass" if actual_roll == expected_roll else "mismatch"),
+        reason=("Roll number matches after normalization." if actual_roll == expected_roll else
+                "Roll number was not extracted from the document." if not actual_roll else
+                "Roll number differs from the applicant's value."),
+    ))
+    expected_dob = normalize_date(application.dob)
+    actual_dob = normalize_date(extracted.dob) if extracted.dob else None
+    output.append(FieldValidation(
+        field="dob", expected=expected_dob or application.dob, extracted=actual_dob or extracted.dob,
+        result="missing" if not extracted.dob else ("pass" if actual_dob and actual_dob == expected_dob else "mismatch"),
+        reason=("Date of birth matches after normalization." if actual_dob and actual_dob == expected_dob else
+                "Date of birth was not extracted from the document." if not extracted.dob else
+                "Date of birth is invalid or differs from the applicant's value."),
+    ))
+    if application.board is not None:
+        actual_board = extracted.board or ""
+        board_match = actual_board.strip().casefold() == application.board.strip().casefold()
+        output.append(FieldValidation(
+            field="board", expected=application.board, extracted=extracted.board,
+            result="missing" if not actual_board else ("pass" if board_match else "mismatch"),
+            reason=("Board matches after case normalization." if board_match else
+                    "Board was not extracted from the document." if not actual_board else
+                    "Board differs from the applicant's value."),
+        ))
+    actual_year = extracted.year
+    output.append(FieldValidation(
+        field="year", expected=application.year, extracted=actual_year,
+        result="missing" if actual_year is None else ("pass" if actual_year == application.year else "mismatch"),
+        reason=("Exam year matches the applicant's value." if actual_year == application.year else
+                "Exam year was not extracted from the document." if actual_year is None else
+                "Exam year differs from the applicant's value."),
+    ))
+    if application.total is not None:
+        valid_total = extracted.total is not None and 0 <= extracted.total <= 500
+        matches = valid_total and extracted.total == application.total
+        output.append(FieldValidation(
+            field="total", expected=application.total, extracted=extracted.total,
+            result="missing" if extracted.total is None else ("pass" if matches else "mismatch"),
+            reason=("Total marks match the applicant's value." if matches else
+                    "Total marks were not extracted from the document." if extracted.total is None else
+                    "Total marks must be between 0 and 500 and match the applicant's value."),
+        ))
+    return output
 
 
 def validate_internal(extracted: ExtractedDocument) -> list[FieldValidation]:
@@ -129,34 +190,17 @@ def validate_internal(extracted: ExtractedDocument) -> list[FieldValidation]:
     return results
 
 
-def decide(extracted: ExtractedDocument, validations: list[FieldValidation]) -> Decision:
+def decide(extracted: ExtractedDocument | list[FieldValidation], validations: list[FieldValidation] | None = None) -> Decision:
+    """Return a deterministic processing state from field validations only.
+
+    The optional legacy ``extracted`` argument is retained for caller compatibility;
+    model-generated verdicts and visual authenticity signals are ignored.
     """
-    Three-verdict decision combining Gemini's verdict with internal consistency checks.
-    Gemini's verdict is primary; internal checks can escalate but not override downward.
-    """
-    gemini = extracted.gemini_verdict  # verified / needs_review / suspicious
-
-    # Count internal check results
-    passed = sum(1 for v in validations if v.result == "pass")
-    total = len(validations)
-    pass_rate = passed / total if total else 0.0
-
-    # Escalate to suspicious if Gemini flags it OR if AI score very high OR consistency very low
-    if (
-        gemini == "suspicious"
-        or extracted.ai_generation_score >= 0.6
-        or extracted.internal_consistency_score <= 0.3
-        or (pass_rate < 0.4 and total >= 4)
-    ):
-        return "suspicious"
-
-    # Verified: Gemini says so AND internal checks mostly pass AND low AI score
-    if (
-        gemini == "verified"
-        and pass_rate >= 0.7
-        and extracted.ai_generation_score < 0.3
-        and extracted.internal_consistency_score >= 0.7
-    ):
-        return "verified"
-
-    return "needs_review"
+    checks = validations if validations is not None else (extracted if isinstance(extracted, list) else [])
+    if not checks:
+        return "missing"
+    if any(item.result == "mismatch" for item in checks):
+        return "needs_review"
+    if any(item.result == "missing" for item in checks):
+        return "missing"
+    return "verified"

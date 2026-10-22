@@ -16,6 +16,7 @@ data/
 *.sqlite-shm
 *.sqlite-wal
 .pytest-tmp-*/
+.pytest-tmp/
 .DS_Store
 .vscode/
 .idea/

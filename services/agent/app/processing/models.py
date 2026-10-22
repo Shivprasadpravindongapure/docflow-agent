@@ -65,15 +65,15 @@ class ExtractedDocument(BaseModel):
     grade: str | None = None
     division: str | None = None        # "First", "Second", "Third"
 
-    # Gemini's own analysis
-    internal_consistency_score: float = 0.5   # 0–1 (1 = perfectly consistent)
+    # Deprecated legacy fields are retained for response compatibility and are never used to decide authenticity.
+    internal_consistency_score: float | None = None
     consistency_issues: list[str] = Field(default_factory=list)
-    ai_generation_score: float = 0.0          # 0–1 (1 = clearly AI-generated)
-    suspicion_signals: list[str] = Field(default_factory=list)   # red flags
-    authenticity_signals: list[str] = Field(default_factory=list)  # good signs
+    ai_generation_score: float | None = None
+    suspicion_signals: list[str] = Field(default_factory=list)
+    authenticity_signals: list[str] = Field(default_factory=list)
 
-    gemini_verdict: Literal["verified", "needs_review", "suspicious"] = "needs_review"
-    gemini_reasoning: str = ""
+    gemini_verdict: Literal["needs_review"] = "needs_review"
+    gemini_reasoning: str | None = None
 
     extraction_method: str = "gemini"
     warnings: list[str] = Field(default_factory=list)
@@ -111,12 +111,12 @@ class AgentReasoning(BaseModel):
     summary: str
     why_decision: str
     flags: list[str] = Field(default_factory=list)
-    confidence_score: float = Field(ge=0.0, le=1.0)
+    confidence_score: float | None = None  # Deprecated; new processing results always emit null.
 
 
 # ── Final decision ────────────────────────────────────────────────────────────
 
-Decision = Literal["verified", "needs_review", "suspicious"]
+Decision = Literal["verified", "needs_review", "missing"]
 
 
 # ── Legacy (kept for worker compat) ──────────────────────────────────────────

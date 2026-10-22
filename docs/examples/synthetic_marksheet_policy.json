@@ -1,0 +1,15 @@
+{
+  "source_id": "demo-admissions-marksheet",
+  "version": "v1",
+  "title": "Synthetic admissions marksheet review example",
+  "text": "# Synthetic demonstration only\n\nThis invented example is not an official or institution-approved rule. It exists only to demonstrate policy ingestion and retrieval plumbing.\n\n## Candidate identity fields\nA sample marksheet may be checked for a labelled candidate name and examination year. Missing or unreadable values should be sent for human review.\n\n## Decision boundary\nA field mismatch is an internal consistency signal only. It does not establish document authenticity or determine eligibility.",
+  "workflow": "synthetic-admissions-demo",
+  "document_type": "marksheet",
+  "source_kind": "synthetic",
+  "jurisdiction": null,
+  "organization_id": null,
+  "source_uri": null,
+  "status": "active",
+  "effective_from": null,
+  "effective_to": null
+}

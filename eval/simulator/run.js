@@ -306,10 +306,11 @@ function summarizeCsv(csvText) {
   };
 }
 
-async function requestJson(fetchImpl, url, { method = 'GET', token, body, contentType } = {}) {
+async function requestJson(fetchImpl, url, { method = 'GET', token, body, contentType, documentType } = {}) {
   const headers = {};
   if (token) headers.authorization = `Bearer ${token}`;
   if (contentType) headers['content-type'] = contentType;
+  if (documentType) headers['x-document-type'] = documentType;
   if (body && contentType === 'application/json') body = JSON.stringify(body);
   const response = await fetchImpl(url, {
     method,
@@ -479,6 +480,7 @@ async function uploadDocument(fetchImpl, apiUrl, token, applicationId, fixture, 
     method: 'POST',
     token,
     contentType,
+    documentType: 'marksheet',
     body: documentBytes,
   });
   if (typeof upload.document_id !== 'string') {
